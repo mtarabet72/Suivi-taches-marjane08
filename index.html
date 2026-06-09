@@ -966,17 +966,27 @@ function onLoginSuccess(){
     if(stored){completions=JSON.parse(stored);}
     else{completions={};}
   }catch(e){completions={};}
-  // Puis sync depuis Firebase si disponible
-  if(_fbDb && _fbConnected){
+  // Si admin : fusionner toutes les completions Firebase
+  if(_fbDb && _fbConnected && isDirecteur()){
+    _fbDb.ref('hm_data/completions').once('value').then(s=>{
+      const allComp=s.val();
+      if(allComp && typeof allComp==='object'){
+        let merged={};
+        Object.values(allComp).forEach(uc=>{ if(uc)Object.assign(merged,uc); });
+        completions=merged;
+        renderTasks(); renderProgressBar(); renderDashboard();
+      }
+    }).catch(()=>{});
+  } else if(_fbDb && _fbConnected){
+    // User : charger ses propres completions depuis Firebase
     _fbDb.ref('hm_data/completions/'+uid).once('value').then(s=>{
       const fbComp=s.val();
-      if(fbComp && typeof fbComp==='object'){ completions=fbComp; localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions)); renderTasks(); renderProgressBar(); }
+      if(fbComp && typeof fbComp==='object'){
+        completions=fbComp;
+        localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions));
+        renderTasks(); renderProgressBar();
+      }
     }).catch(()=>{});
-    // Écouter les completions de cet user en temps réel
-    _fbDb.ref('hm_data/completions/'+uid).on('value',s=>{
-      const fbComp=s.val();
-      if(fbComp && typeof fbComp==='object'){ completions=fbComp; localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions)); if(currentUser)renderTasks(); }
-    });
   }
   document.getElementById('login-overlay').classList.add('hidden');
   updateHeaderUser();
@@ -2160,6 +2170,28 @@ function initFirebase(cfg){
           if(fbOv && typeof fbOv==='object'){
             taskOverrides=fbOv;
             localStorage.setItem('hm_overrides',JSON.stringify(taskOverrides));
+          }
+        });
+        // ── Écoute completions de TOUS les users (pour l'admin) ──
+        _fbDb.ref('hm_data/completions').on('value',s=>{
+          const allComp=s.val();
+          if(!allComp || typeof allComp!=='object') return;
+          if(isDirecteur()){
+            // Admin : fusionner toutes les completions de tous les users
+            let merged={};
+            Object.values(allComp).forEach(userComp=>{
+              if(userComp && typeof userComp==='object') Object.assign(merged,userComp);
+            });
+            completions=merged;
+            if(currentUser) { renderTasks(); renderProgressBar(); renderSidebar(); renderDashboard(); }
+          } else if(currentUser){
+            // User : recharger ses propres completions
+            const uid=currentUser.id;
+            if(allComp[uid]){
+              completions=allComp[uid];
+              localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions));
+              renderTasks(); renderProgressBar();
+            }
           }
         });
       } else {
