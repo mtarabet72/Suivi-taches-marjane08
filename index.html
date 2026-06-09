@@ -966,17 +966,19 @@ function onLoginSuccess(){
     if(stored){completions=JSON.parse(stored);}
     else{completions={};}
   }catch(e){completions={};}
-  // Si admin : fusionner toutes les completions Firebase
+  // Si admin : écouter toutes les completions Firebase en temps réel
   if(_fbDb && _fbConnected && isDirecteur()){
-    _fbDb.ref('hm_data/completions').once('value').then(s=>{
+    _fbDb.ref('hm_data/completions').on('value', s=>{
       const allComp=s.val();
       if(allComp && typeof allComp==='object'){
         let merged={};
         Object.values(allComp).forEach(uc=>{ if(uc)Object.assign(merged,uc); });
         completions=merged;
         renderTasks(); renderProgressBar(); renderDashboard();
+        // Notifier l'admin visuellement si le live panel est ouvert
+        if(_livePanel) renderLivePanel(buildLiveSnapshot());
       }
-    }).catch(()=>{});
+    });
   } else if(_fbDb && _fbConnected){
     // User : charger ses propres completions depuis Firebase
     _fbDb.ref('hm_data/completions/'+uid).once('value').then(s=>{
@@ -1107,9 +1109,9 @@ function getAllTasks(rid){
       return t.jours.includes(todayName);
     }
     if(t.freq==='M'){
-      // Visible si aujourd'hui est une date définie (ou si aucune date)
-      if(!t.datesMois||t.datesMois.length===0)return true;
-      return t.datesMois.map(d=>parseInt(d)).includes(todayDate);
+      if(isAdmin)return true;
+      if(!t.datesMois||!Array.isArray(t.datesMois)||t.datesMois.length===0)return true;
+      return t.datesMois.map(d=>parseInt(d,10)).filter(d=>!isNaN(d)).includes(todayDate);
     }
     return true;
   })];
