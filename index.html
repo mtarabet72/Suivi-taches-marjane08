@@ -870,6 +870,7 @@ function hashStr(s){
 // INIT & STORAGE
 // ══════════════════════════════════════════════════════════════
 function loadData(){
+  // Les completions sont rechargées après login dans onLoginSuccess()
   try{completions=JSON.parse(localStorage.getItem("hm_comp")||"{}");}catch(e){}
   try{customTasks=JSON.parse(localStorage.getItem("hm_cust")||"{}");}catch(e){}
   try{completionLog=JSON.parse(localStorage.getItem("hm_log")||"[]");}catch(e){}
@@ -894,7 +895,9 @@ function loadData(){
   }
 }
 function saveData(){
-  localStorage.setItem("hm_comp",JSON.stringify(completions));
+  const uid=currentUser?currentUser.id:'guest';
+  localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions));
+  localStorage.setItem("hm_comp",JSON.stringify(completions)); // compatibilité
   localStorage.setItem("hm_cust",JSON.stringify(customTasks));
   localStorage.setItem("hm_log",JSON.stringify(completionLog));
   localStorage.setItem("hm_overrides",JSON.stringify(taskOverrides));
@@ -933,6 +936,13 @@ function showLoginScreen(){
 }
 // doLogin() déplacé plus haut avec les listeners
 function onLoginSuccess(){
+  // Charger les completions propres à cet utilisateur
+  const uid=currentUser?currentUser.id:'guest';
+  try{
+    const stored=localStorage.getItem('hm_comp_'+uid);
+    if(stored){completions=JSON.parse(stored);}
+    else{completions={};}
+  }catch(e){completions={};}
   document.getElementById('login-overlay').classList.add('hidden');
   updateHeaderUser();
   applyAccessControl();
@@ -1052,7 +1062,11 @@ function todayKey(){return new Date().toISOString().slice(0,10);}
 function weekKey(){const d=new Date(),j=new Date(d.getFullYear(),0,1);const w=Math.ceil(((d-j)/864e5+j.getDay()+1)/7);return `${d.getFullYear()}-W${String(w).padStart(2,"0")}`;}
 function monthKey(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;}
 function periodKey(freq){if(freq==="Q")return todayKey();if(freq==="H")return weekKey();return monthKey();}
-function ck(rid,tid,freq){return `${rid}__${tid}__${periodKey(freq)}`;}
+function ck(rid,tid,freq){
+  // Clé isolée par utilisateur : chaque user a ses propres completions
+  const uid = currentUser ? currentUser.id : 'guest';
+  return `${uid}__${rid}__${tid}__${periodKey(freq)}`;
+}
 function weekKeyForDate(s){const d=new Date(s+'T00:00:00'),j=new Date(d.getFullYear(),0,1),w=Math.ceil(((d-j)/864e5+j.getDay()+1)/7);return `${d.getFullYear()}-W${String(w).padStart(2,'0')}`;}
 function getWeekDates(s){const d=new Date(s+'T00:00:00'),day=d.getDay(),diff=day===0?-6:1-day,mon=new Date(d);mon.setDate(d.getDate()+diff);const r=[];for(let i=0;i<7;i++){const x=new Date(mon);x.setDate(mon.getDate()+i);r.push(x.toISOString().slice(0,10));}return r;}
 function fmtDate(d){const days=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"],months=["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;}
@@ -1068,18 +1082,37 @@ function showToast(msg,color='#1a1f2e'){
 // ══════════════════════════════════════════════════════════════
 function setDashPeriod(p,btn){dashPeriod=p;document.querySelectorAll(".period-btn").forEach(b=>b.classList.remove("active"));btn.classList.add("active");renderDashboard();}
 function renderDashboard(){
-  const g=getGlobalStats(dashPeriod),gc=getSecteurStats("Commercial",dashPeriod),gs=getSecteurStats("Services",dashPeriod);
+  // ── Filtrer les rôles selon le profil connecté ──
+  const isAdmin = isDirecteur();
+  const visibleRoles = isAdmin
+    ? ROLES  // admin voit tout
+    : ROLES.filter(r =>
+        (currentUser.evaluableRoleIds||[]).includes(r.id) ||
+        currentUser.ownRoleId === r.id
+      );
+
+  // Stats globales sur les rôles visibles uniquement
+  function statsFor(roles, freq){
+    let done=0,total=0;
+    roles.forEach(r=>{const s=getRoleStats(r.id,freq);done+=s.done;total+=s.total;});
+    return{done,total,pct:total?Math.round(done/total*100):0};
+  }
+  const g = statsFor(visibleRoles, dashPeriod);
+  const gc = statsFor(visibleRoles.filter(r=>r.secteur==='Commercial'), dashPeriod);
+  const gs = statsFor(visibleRoles.filter(r=>r.secteur==='Services'), dashPeriod);
+
   const pl=dashPeriod==="Q"?`📅 ${fmtDate(new Date())}`:dashPeriod==="H"?`📅 Semaine ${weekKey()}`:`📅 ${monthKey()}`;
   document.getElementById("dash-period-label").textContent=pl;
-  const rd=ROLES.filter(r=>getRoleStats(r.id,dashPeriod).pct===100).length;
+  const rd=visibleRoles.filter(r=>getRoleStats(r.id,dashPeriod).pct===100).length;
   document.getElementById("dash-summary").innerHTML=`
-    <div class="sum-card" style="border-top-color:#e63950"><div class="sc-val" style="color:#e63950">${g.pct}%</div><div class="sc-label">Taux global</div><div class="sc-sub" style="color:#e63950">${g.done}/${g.total}</div></div>
+    <div class="sum-card" style="border-top-color:#e63950"><div class="sc-val" style="color:#e63950">${g.pct}%</div><div class="sc-label">${isAdmin?'Taux global':'Mon taux'}</div><div class="sc-sub" style="color:#e63950">${g.done}/${g.total}</div></div>
     <div class="sum-card" style="border-top-color:#1a6b3c"><div class="sc-val" style="color:#1a6b3c">${gc.pct}%</div><div class="sc-label">Commercial</div><div class="sc-sub" style="color:#1a6b3c">${gc.done}/${gc.total}</div></div>
     <div class="sum-card" style="border-top-color:#2980b9"><div class="sc-val" style="color:#2980b9">${gs.pct}%</div><div class="sc-label">Services</div><div class="sc-sub" style="color:#2980b9">${gs.done}/${gs.total}</div></div>
-    <div class="sum-card" style="border-top-color:#27ae60"><div class="sc-val" style="color:#27ae60">${rd}</div><div class="sc-label">Fonctions à 100%</div><div class="sc-sub" style="color:#27ae60">sur ${ROLES.length}</div></div>`;
+    <div class="sum-card" style="border-top-color:#27ae60"><div class="sc-val" style="color:#27ae60">${rd}</div><div class="sc-label">Fonctions à 100%</div><div class="sc-sub" style="color:#27ae60">sur ${visibleRoles.length}</div></div>`;
   let html="";
   ["Commercial","Services"].forEach(secteur=>{
-    const roles=ROLES.filter(r=>r.secteur===secteur);
+    const roles=visibleRoles.filter(r=>r.secteur===secteur);
+    if(roles.length===0)return;
     const sg=getSecteurStats(secteur,dashPeriod);const icon=secteur==="Commercial"?"🛍️":"⚙️";
     const pctColor=sg.pct>=80?"#27ae60":sg.pct>=50?"#f39c12":"#e74c3c";
     html+=`<div class="secteur-block"><div class="secteur-head"><span class="sh-icon">${icon}</span><span class="sh-name">${secteur}</span><div><span class="sh-pct" style="color:${pctColor}">${sg.pct}%</span><span style="font-size:10px;color:var(--muted);margin-left:5px;">${sg.done}/${sg.total}</span></div></div><div class="roles-grid">
@@ -1140,7 +1173,7 @@ function renderTaskView(){
     document.getElementById('eval-banner-text').textContent=`🔍 Mode Évaluation — Vous évaluez : ${r.label} (${r.sous})`;
   } else {banner.classList.remove('show');}
   // Add button: only for own role or directeur
-  const canAdd=isDirecteur()||(currentUser?.ownRoleId===currentRoleId);
+  const canAdd=isDirecteur(); // Seul le Directeur peut créer des tâches
   document.getElementById('add-btn').style.display=canAdd?'block':'none';
   renderRoleHeader();renderControls();renderTasks();renderProgressBar();
 }
@@ -1215,7 +1248,7 @@ function toggleTask(tid,freq){
   saveData();broadcastUpdate();renderTasks();renderRoleHeader();renderProgressBar();renderSidebar();
 }
 function setFreq(f){currentFreq=f;renderControls();renderTasks();renderProgressBar();}
-function toggleAddForm(){const f=document.getElementById("add-form");f.classList.toggle("open");if(f.classList.contains("open"))document.getElementById("nt-input").focus();}
+function toggleAddForm(){if(!isDirecteur()){showToast('Accès réservé au Directeur','#e74c3c');return;}const f=document.getElementById("add-form");f.classList.toggle("open");if(f.classList.contains("open"))document.getElementById("nt-input").focus();}
 function closeAddForm(){document.getElementById("add-form").classList.remove("open");document.getElementById("nt-input").value="";}
 function updatePeriodeFields(){
   const freq=document.getElementById("nt-freq").value;
@@ -1224,6 +1257,7 @@ function updatePeriodeFields(){
   document.getElementById("af-periode-m").style.display=freq==="M"?"flex":"none";
 }
 function saveCustomTask(){
+  if(!isDirecteur()){showToast('Accès réservé au Directeur','#e74c3c');return;}
   const label=document.getElementById("nt-input").value.trim();if(!label)return;
   const freq=document.getElementById("nt-freq").value;
   const id="c_"+Date.now();
@@ -1951,13 +1985,18 @@ let _livePanel=null;
 
 function broadcastUpdate(){
   const snapshot=buildLiveSnapshot();
-  const payload={snapshot,updatedAt:new Date().toISOString(),byUser:currentUser?.name||'?'};
-  // Firebase (multi-appareils, internet général)
+  const uid=currentUser?currentUser.id:'guest';
+  const payload={snapshot,updatedAt:new Date().toISOString(),byUser:currentUser?.name||'?',userId:uid};
+  // Firebase — stocker par userId pour isolation + admin voit tout
   if(_fbDb&&_fbConnected){
-    _fbDb.ref('hm_live/snapshot').set(payload).catch(()=>{});
+    _fbDb.ref('hm_live/users/'+uid).set(payload).catch(()=>{});
+    // Si admin, mettre aussi le snapshot global
+    if(isDirecteur()){
+      _fbDb.ref('hm_live/snapshot').set(payload).catch(()=>{});
+    }
   }
   // Fallback localStorage (même navigateur)
-  try{localStorage.setItem('hm_live_update',JSON.stringify(payload));}catch(e){}
+  try{localStorage.setItem('hm_live_update_'+uid,JSON.stringify(payload));}catch(e){}
 }
 
 function buildLiveSnapshot(){
