@@ -900,7 +900,13 @@ function saveData(){
   localStorage.setItem("hm_overrides",JSON.stringify(taskOverrides));
 }
 function saveCompanyData(){localStorage.setItem("hm_company",JSON.stringify(companyData));}
-function saveUsers(){localStorage.setItem("hm_users",JSON.stringify(usersData));}
+function saveUsers(){
+  localStorage.setItem("hm_users", JSON.stringify(usersData));
+  // Synchronisation Firebase
+  if(_fbDb){
+    _fbDb.ref('hm_users').set(usersData).catch(e=>console.warn('Firebase saveUsers:',e));
+  }
+}
 
 // ══════════════════════════════════════════════════════════════
 // AUTHENTIFICATION
@@ -1884,7 +1890,6 @@ function renderFirebaseConfigForm(){
 }
 function initFirebase(cfg){
   try{
-    // Supprimer l'app existante si besoin
     if(_fbApp){try{firebase.app('hm').delete();}catch(e){}}
     _fbApp=firebase.initializeApp(cfg,'hm');
     _fbDb=firebase.database(_fbApp);
@@ -1896,6 +1901,28 @@ function initFirebase(cfg){
       if(_fbConnected){
         showFirebaseStatus('✅ Firebase connecté — Suivi live actif','#27ae60');
         showToast('🔥 Firebase connecté !','#27ae60');
+        // ── Sync utilisateurs depuis Firebase ──
+        _fbDb.ref('hm_users').once('value').then(s=>{
+          const fbUsers=s.val();
+          if(fbUsers && Array.isArray(fbUsers) && fbUsers.length>0){
+            // Fusionner : Firebase est la source de vérité pour les users
+            usersData=fbUsers;
+            localStorage.setItem('hm_users',JSON.stringify(usersData));
+            renderUsersList();
+          } else if(usersData.length>0){
+            // Aucun user dans Firebase → on y pousse ce qu'on a en local
+            _fbDb.ref('hm_users').set(usersData).catch(()=>{});
+          }
+        }).catch(()=>{});
+        // ── Écoute en temps réel des changements users ──
+        _fbDb.ref('hm_users').on('value',s=>{
+          const fbUsers=s.val();
+          if(fbUsers && Array.isArray(fbUsers) && fbUsers.length>0){
+            usersData=fbUsers;
+            localStorage.setItem('hm_users',JSON.stringify(usersData));
+            renderUsersList();
+          }
+        });
       } else {
         if(statusBar)showFirebaseStatus('⏳ Connexion Firebase en cours...','#f39c12');
       }
