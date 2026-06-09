@@ -157,7 +157,7 @@ input,select,textarea{font-family:'DM Sans',sans-serif;font-size:14px;}
 #sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:140;backdrop-filter:blur(2px);cursor:pointer;}
 @media(max-width:640px){
   #view-tasks{display:block;}
-  #sidebar{position:fixed;top:0;left:0;height:100vh;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.18);padding-top:56px;}
+  #sidebar{position:fixed;top:0;left:0;height:100vh;width:80vw;max-width:300px;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.18);padding-top:0;overflow-y:auto;-webkit-overflow-scrolling:touch;z-index:200;}
   #sidebar.open{transform:translateX(0);}
   #sidebar-overlay.open{display:block;}
   #sidebar-toggle{display:flex;}
@@ -478,46 +478,62 @@ input,select,textarea{font-family:'DM Sans',sans-serif;font-size:14px;}
       <button id="add-btn" onclick="toggleAddForm()" style="display:none">+ Ajouter tâche</button>
     </div>
     <div id="add-form">
-      <h4 id="af-title">Nouvelle tâche</h4>
+      <h4 id="af-title">➕ Nouvelle tâche personnalisée</h4>
       <div class="af-row">
-        <input type="text" id="nt-input" placeholder="Libellé de la tâche..." onkeydown="if(event.key==='Enter')saveCustomTask()" style="min-width:220px;">
-        <select id="nt-freq" onchange="updatePeriodeFields()"><option value="Q">Quotidien</option><option value="H">Hebdomadaire</option><option value="M">Mensuel</option></select>
-      </div>
-      <!-- Champs dynamiques selon fréquence -->
-      <div id="af-periode-q" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <span style="font-size:11px;font-weight:700;color:var(--muted);">🕐 Période :</span>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="radio" name="q-moment" value="MATIN" checked> Matin</label>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="radio" name="q-moment" value="SOIR"> Soir</label>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="radio" name="q-moment" value="LES DEUX"> Les deux</label>
-      </div>
-      <div id="af-periode-h" style="margin-top:8px;display:none;flex-wrap:wrap;gap:8px;align-items:center;">
-        <span style="font-size:11px;font-weight:700;color:var(--muted);">📅 Fréquence :</span>
-        <select id="nt-h-fois" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:12px;">
-          <option value="1">1×/semaine</option><option value="2">2×/semaine</option><option value="3">3×/semaine</option>
-          <option value="4">4×/semaine</option><option value="5">5×/semaine</option><option value="6">6×/semaine</option>
-          <option value="7">Tous les jours</option>
+        <input type="text" id="nt-input" placeholder="Libellé de la tâche..." onkeydown="if(event.key==='Enter')saveCustomTask()" style="flex:1;min-width:180px;">
+        <select id="nt-freq" onchange="updatePeriodeFields()" style="padding:7px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:12px;">
+          <option value="Q">📅 Quotidien</option>
+          <option value="H">📆 Hebdomadaire</option>
+          <option value="M">🗓️ Mensuel</option>
         </select>
-        <span style="font-size:11px;font-weight:700;color:var(--muted);">📆 Jours :</span>
-        <div style="display:flex;gap:5px;flex-wrap:wrap;" id="af-jours-semaine">
-          <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Lun"> Lun</label>
-          <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Mar"> Mar</label>
-          <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Mer"> Mer</label>
-          <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Jeu"> Jeu</label>
-          <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Ven"> Ven</label>
-          <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Sam"> Sam</label>
-          <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Dim"> Dim</label>
+      </div>
+      <!-- Assigné à -->
+      <div style="margin-top:8px;">
+        <label style="font-size:11px;font-weight:700;color:var(--muted);">👤 Assignée à :</label>
+        <select id="nt-assignee" style="margin-left:8px;padding:6px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:12px;min-width:160px;">
+          <option value="">-- Choisir un utilisateur --</option>
+        </select>
+      </div>
+      <!-- Quotidien : matin/soir -->
+      <div id="af-periode-q" style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;background:#fef9f0;padding:8px 12px;border-radius:8px;border:1px solid #fde8c0;">
+        <span style="font-size:11px;font-weight:700;color:#e67e22;">🕐 Deadline :</span>
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="radio" name="q-moment" value="MATIN" checked> <span>🌅 Matin <b style="color:#e74c3c">(avant 12h00)</b></span></label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="radio" name="q-moment" value="SOIR"> <span>🌙 Soir <b style="color:#8e44ad">(avant 22h00)</b></span></label>
+      </div>
+      <!-- Hebdomadaire : jours + matin/soir -->
+      <div id="af-periode-h" style="margin-top:10px;display:none;flex-direction:column;gap:8px;background:#eaf6fb;padding:10px 12px;border-radius:8px;border:1px solid #aed6f1;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <span style="font-size:11px;font-weight:700;color:#2980b9;">📆 Jours d'exécution :</span>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;">
+            <label style="font-size:11px;padding:3px 8px;border-radius:6px;background:#d6eaf8;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Lun"> Lun</label>
+            <label style="font-size:11px;padding:3px 8px;border-radius:6px;background:#d6eaf8;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Mar"> Mar</label>
+            <label style="font-size:11px;padding:3px 8px;border-radius:6px;background:#d6eaf8;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Mer"> Mer</label>
+            <label style="font-size:11px;padding:3px 8px;border-radius:6px;background:#d6eaf8;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Jeu"> Jeu</label>
+            <label style="font-size:11px;padding:3px 8px;border-radius:6px;background:#d6eaf8;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Ven"> Ven</label>
+            <label style="font-size:11px;padding:3px 8px;border-radius:6px;background:#d6eaf8;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Sam"> Sam</label>
+            <label style="font-size:11px;padding:3px 8px;border-radius:6px;background:#d6eaf8;cursor:pointer;"><input type="checkbox" class="jour-chk" value="Dim"> Dim</label>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <span style="font-size:11px;font-weight:700;color:#2980b9;">🕐 Deadline :</span>
+          <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="radio" name="h-moment" value="MATIN" checked> 🌅 Matin <b style="color:#e74c3c">(avant 12h)</b></label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="radio" name="h-moment" value="SOIR"> 🌙 Soir <b style="color:#8e44ad">(avant 22h)</b></label>
         </div>
       </div>
-      <div id="af-periode-m" style="margin-top:8px;display:none;flex-wrap:wrap;gap:8px;align-items:center;">
-        <span style="font-size:11px;font-weight:700;color:var(--muted);">🗓️ Fréquence :</span>
-        <select id="nt-m-fois" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:12px;">
-          <option value="1">1×/mois</option><option value="2">2×/mois</option><option value="3">3×/mois</option><option value="4">4×/mois</option>
-        </select>
-        <span style="font-size:11px;font-weight:700;color:var(--muted);">📌 Précision :</span>
-        <input type="text" id="nt-m-date" placeholder="ex: le 1er, le 15, fin de mois..." style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:12px;min-width:180px;">
+      <!-- Mensuel : date + matin/soir -->
+      <div id="af-periode-m" style="margin-top:10px;display:none;flex-direction:column;gap:8px;background:#eafaf1;padding:10px 12px;border-radius:8px;border:1px solid #a9dfbf;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span style="font-size:11px;font-weight:700;color:#27ae60;">🗓️ Date(s) du mois :</span>
+          <input type="text" id="nt-m-date" placeholder="ex: 1, 15, 28 (séparés par virgule)" style="padding:6px 10px;border-radius:8px;border:1.5px solid #a9dfbf;font-size:12px;min-width:200px;">
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <span style="font-size:11px;font-weight:700;color:#27ae60;">🕐 Deadline :</span>
+          <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="radio" name="m-moment" value="MATIN" checked> 🌅 Matin <b style="color:#e74c3c">(avant 12h)</b></label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="radio" name="m-moment" value="SOIR"> 🌙 Soir <b style="color:#8e44ad">(avant 22h)</b></label>
+        </div>
       </div>
-      <div class="af-row" style="margin-top:10px;">
-        <button class="af-save" id="af-save-btn" onclick="saveCustomTask()">Ajouter</button>
+      <div class="af-row" style="margin-top:12px;">
+        <button class="af-save" id="af-save-btn" onclick="saveCustomTask()">✅ Enregistrer la tâche</button>
         <button class="af-cancel" onclick="closeAddForm()">Annuler</button>
       </div>
     </div>
@@ -897,10 +913,17 @@ function loadData(){
 function saveData(){
   const uid=currentUser?currentUser.id:'guest';
   localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions));
-  localStorage.setItem("hm_comp",JSON.stringify(completions)); // compatibilité
+  localStorage.setItem("hm_comp",JSON.stringify(completions));
   localStorage.setItem("hm_cust",JSON.stringify(customTasks));
   localStorage.setItem("hm_log",JSON.stringify(completionLog));
   localStorage.setItem("hm_overrides",JSON.stringify(taskOverrides));
+  // ── Sync Firebase ──
+  if(_fbDb && _fbConnected){
+    _fbDb.ref('hm_data/customTasks').set(customTasks).catch(()=>{});
+    _fbDb.ref('hm_data/completions/'+uid).set(completions).catch(()=>{});
+    _fbDb.ref('hm_data/completionLog').set(completionLog).catch(()=>{});
+    _fbDb.ref('hm_data/taskOverrides').set(taskOverrides).catch(()=>{});
+  }
 }
 function saveCompanyData(){localStorage.setItem("hm_company",JSON.stringify(companyData));}
 function saveUsers(){
@@ -936,13 +959,25 @@ function showLoginScreen(){
 }
 // doLogin() déplacé plus haut avec les listeners
 function onLoginSuccess(){
-  // Charger les completions propres à cet utilisateur
   const uid=currentUser?currentUser.id:'guest';
+  // Charger completions depuis localStorage d'abord
   try{
     const stored=localStorage.getItem('hm_comp_'+uid);
     if(stored){completions=JSON.parse(stored);}
     else{completions={};}
   }catch(e){completions={};}
+  // Puis sync depuis Firebase si disponible
+  if(_fbDb && _fbConnected){
+    _fbDb.ref('hm_data/completions/'+uid).once('value').then(s=>{
+      const fbComp=s.val();
+      if(fbComp && typeof fbComp==='object'){ completions=fbComp; localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions)); renderTasks(); renderProgressBar(); }
+    }).catch(()=>{});
+    // Écouter les completions de cet user en temps réel
+    _fbDb.ref('hm_data/completions/'+uid).on('value',s=>{
+      const fbComp=s.val();
+      if(fbComp && typeof fbComp==='object'){ completions=fbComp; localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions)); if(currentUser)renderTasks(); }
+    });
+  }
   document.getElementById('login-overlay').classList.add('hidden');
   updateHeaderUser();
   applyAccessControl();
@@ -1040,7 +1075,34 @@ function getTaskEffective(role,task){
 function isTaskHidden(rid,tid){return !!(taskOverrides[rid]||{})[tid]?.hidden;}
 function getAllTasks(rid){
   const r=getRole(rid);
-  return[...r.taches.filter(t=>!isTaskHidden(rid,t.id)).map(t=>getTaskEffective(r,t)),...(customTasks[rid]||[])];
+  const baseTasks=r.taches.filter(t=>!isTaskHidden(rid,t.id)).map(t=>getTaskEffective(r,t));
+  const allCustom=(customTasks[rid]||[]);
+  // Pour l'admin : toutes les tâches custom
+  // Pour un user : uniquement les tâches qui lui sont assignées
+  const uid=currentUser?.id;
+  const isAdmin=isDirecteur();
+  const filteredCustom=isAdmin
+    ? allCustom
+    : allCustom.filter(t=>t.assignedTo===uid);
+  // Vérifier si la tâche est applicable aujourd'hui (hebdo/mensuel)
+  const today=new Date();
+  const joursMap={0:'Dim',1:'Lun',2:'Mar',3:'Mer',4:'Jeu',5:'Ven',6:'Sam'};
+  const todayName=joursMap[today.getDay()];
+  const todayDate=today.getDate();
+  return[...baseTasks,...filteredCustom.filter(t=>{
+    if(t.freq==='Q')return true; // quotidien = toujours visible
+    if(t.freq==='H'){
+      // Visible si aujourd'hui est un jour coché (ou si aucun jour défini)
+      if(!t.jours||t.jours.length===0)return true;
+      return t.jours.includes(todayName);
+    }
+    if(t.freq==='M'){
+      // Visible si aujourd'hui est une date définie (ou si aucune date)
+      if(!t.datesMois||t.datesMois.length===0)return true;
+      return t.datesMois.map(d=>parseInt(d)).includes(todayDate);
+    }
+    return true;
+  })];
 }
 function getRoleStats(rid,freq="ALL"){
   const tasks=getAllTasks(rid).filter(t=>freq==="ALL"||t.freq===freq);
@@ -1082,30 +1144,84 @@ function showToast(msg,color='#1a1f2e'){
 // ══════════════════════════════════════════════════════════════
 function setDashPeriod(p,btn){dashPeriod=p;document.querySelectorAll(".period-btn").forEach(b=>b.classList.remove("active"));btn.classList.add("active");renderDashboard();}
 function renderDashboard(){
-  // ── Filtrer les rôles selon le profil connecté ──
   const isAdmin = isDirecteur();
+  // ── Rôles visibles selon profil ──
   const visibleRoles = isAdmin
-    ? ROLES  // admin voit tout
+    ? ROLES
     : ROLES.filter(r =>
         (currentUser.evaluableRoleIds||[]).includes(r.id) ||
         currentUser.ownRoleId === r.id
       );
 
-  // Stats globales sur les rôles visibles uniquement
+  // ── Masquer "Par Rayon" pour non-admin ──
+  const btnRayon = document.getElementById('view-mode-rayon');
+  if(btnRayon) btnRayon.style.display = isAdmin ? '' : 'none';
+
+  // ── Stats sur les rôles visibles ──
   function statsFor(roles, freq){
     let done=0,total=0;
     roles.forEach(r=>{const s=getRoleStats(r.id,freq);done+=s.done;total+=s.total;});
     return{done,total,pct:total?Math.round(done/total*100):0};
   }
+
+  // ── Dashboard personnel pour non-admin ──
+  if(!isAdmin){
+    // Titre personnalisé
+    const ownRole = currentUser.ownRoleId ? ROLES.find(r=>r.id===currentUser.ownRoleId) : null;
+    const dashTitle = ownRole ? `${ownRole.icon} ${ownRole.label}` : '👤 Mes tâches';
+    document.getElementById("dash-period-label").textContent =
+      dashPeriod==="Q"?`📅 ${fmtDate(new Date())}`:dashPeriod==="H"?`📅 Semaine ${weekKey()}`:`📅 ${monthKey()}`;
+
+    const g = statsFor(visibleRoles, dashPeriod);
+    const rd = visibleRoles.filter(r=>getRoleStats(r.id,dashPeriod).pct===100).length;
+
+    // Résumé personnel simplifié
+    document.getElementById("dash-summary").innerHTML=`
+      <div class="sum-card" style="border-top-color:#e63950"><div class="sc-val" style="color:#e63950">${g.pct}%</div><div class="sc-label">Mon avancement</div><div class="sc-sub" style="color:#e63950">${g.done}/${g.total} tâches</div></div>
+      <div class="sum-card" style="border-top-color:#27ae60"><div class="sc-val" style="color:#27ae60">${rd}</div><div class="sc-label">Fonctions à 100%</div><div class="sc-sub" style="color:#27ae60">sur ${visibleRoles.length}</div></div>
+      <div class="sum-card" style="border-top-color:#2980b9"><div class="sc-val" style="color:#2980b9">${g.total-g.done}</div><div class="sc-label">Tâches restantes</div><div class="sc-sub" style="color:#2980b9">${dashPeriod==="Q"?"Aujourd'hui":dashPeriod==="H"?"Cette semaine":"Ce mois"}</div></div>`;
+
+    // Cards uniquement des rôles accessibles
+    let html="";
+    ["Commercial","Services"].forEach(secteur=>{
+      const roles=visibleRoles.filter(r=>r.secteur===secteur);
+      if(!roles.length)return;
+      const sg=statsFor(roles,dashPeriod);
+      const icon=secteur==="Commercial"?"🛍️":"⚙️";
+      const pctColor=sg.pct>=80?"#27ae60":sg.pct>=50?"#f39c12":"#e74c3c";
+      html+=`<div class="secteur-block"><div class="secteur-head"><span class="sh-icon">${icon}</span><span class="sh-name">${secteur}</span><div><span class="sh-pct" style="color:${pctColor}">${sg.pct}%</span><span style="font-size:10px;color:var(--muted);margin-left:5px;">${sg.done}/${sg.total}</span></div></div><div class="roles-grid">
+      ${roles.map(r=>{
+        const s=getRoleStats(r.id,dashPeriod),pct=s.pct,pc=pct>=80?"#27ae60":pct>=50?"#f39c12":"#e74c3c";
+        const tasks=getAllTasks(r.id).filter(t=>dashPeriod==="ALL"||t.freq===dashPeriod),isExp=expandedCards[r.id];
+        const isOwn=r.id===currentUser.ownRoleId;
+        return `<div class="role-card${isExp?" expanded":""}" style="border-left-color:${r.color}" onclick="toggleCard('${r.id}')">
+          <div class="rc-top"><span class="rc-icon">${r.icon}</span><span class="rc-name">${r.label}${isOwn?' <span style="font-size:9px;background:#eafaf1;color:#27ae60;padding:1px 6px;border-radius:8px;font-weight:700;">Mon rôle</span>':''}</span><span class="rc-pct" style="color:${pc}">${pct}%</span></div>
+          <div class="rc-bar-wrap"><div class="rc-bar" style="width:${pct}%;background:${r.color}"></div></div>
+          <div class="rc-count">${s.done}/${s.total} · ${r.sous}</div>
+          <div class="rc-tasks-preview"><div style="font-size:10px;font-weight:700;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:1px;">Tâches</div>
+          ${tasks.map(t=>{const done=completions[ck(r.id,t.id,t.freq)];return `<div class="rct-item"><div class="rct-dot" style="background:${done?r.color:"#e0e4ea"}"></div><span style="color:${done?"#555":"var(--text)"};text-decoration:${done?"line-through":""};flex:1">${t.label}</span><span style="color:${FC[t.freq]};font-size:9px;font-weight:700">${FL[t.freq][0]}</span></div>`;}).join("")}
+          </div></div>`;}).join("")}
+      </div></div>`;
+    });
+
+    if(!html) html=`<div style="text-align:center;padding:40px 20px;color:var(--muted);font-size:14px;">
+      <div style="font-size:48px;margin-bottom:12px;">📋</div>
+      <div style="font-weight:700;">Aucune fonction assignée</div>
+      <div style="font-size:12px;margin-top:6px;">Contactez l'administrateur pour vous assigner des fonctions.</div>
+    </div>`;
+    document.getElementById("dash-secteurs").innerHTML=html;
+    return;
+  }
+
+  // ── Dashboard admin (inchangé) ──
   const g = statsFor(visibleRoles, dashPeriod);
   const gc = statsFor(visibleRoles.filter(r=>r.secteur==='Commercial'), dashPeriod);
   const gs = statsFor(visibleRoles.filter(r=>r.secteur==='Services'), dashPeriod);
-
   const pl=dashPeriod==="Q"?`📅 ${fmtDate(new Date())}`:dashPeriod==="H"?`📅 Semaine ${weekKey()}`:`📅 ${monthKey()}`;
   document.getElementById("dash-period-label").textContent=pl;
   const rd=visibleRoles.filter(r=>getRoleStats(r.id,dashPeriod).pct===100).length;
   document.getElementById("dash-summary").innerHTML=`
-    <div class="sum-card" style="border-top-color:#e63950"><div class="sc-val" style="color:#e63950">${g.pct}%</div><div class="sc-label">${isAdmin?'Taux global':'Mon taux'}</div><div class="sc-sub" style="color:#e63950">${g.done}/${g.total}</div></div>
+    <div class="sum-card" style="border-top-color:#e63950"><div class="sc-val" style="color:#e63950">${g.pct}%</div><div class="sc-label">Taux global</div><div class="sc-sub" style="color:#e63950">${g.done}/${g.total}</div></div>
     <div class="sum-card" style="border-top-color:#1a6b3c"><div class="sc-val" style="color:#1a6b3c">${gc.pct}%</div><div class="sc-label">Commercial</div><div class="sc-sub" style="color:#1a6b3c">${gc.done}/${gc.total}</div></div>
     <div class="sum-card" style="border-top-color:#2980b9"><div class="sc-val" style="color:#2980b9">${gs.pct}%</div><div class="sc-label">Services</div><div class="sc-sub" style="color:#2980b9">${gs.done}/${gs.total}</div></div>
     <div class="sum-card" style="border-top-color:#27ae60"><div class="sc-val" style="color:#27ae60">${rd}</div><div class="sc-label">Fonctions à 100%</div><div class="sc-sub" style="color:#27ae60">sur ${visibleRoles.length}</div></div>`;
@@ -1136,15 +1252,29 @@ function toggleCard(id){expandedCards[id]=!expandedCards[id];renderDashboard();}
 // TASK VIEW
 // ══════════════════════════════════════════════════════════════
 function renderSidebar(){
-  if(viewMode==='rayon')return;
   const sb=document.getElementById("sidebar");
-  sb.innerHTML=`<div class="sb-label">Fonctions accessibles</div>`;
   const accessible=getAccessibleRoles();
-  ["Commercial","Services"].forEach(s=>{
-    const sRoles=accessible.filter(r=>r.secteur===s);
+
+  // Header sidebar avec bouton fermer sur mobile
+  sb.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px 6px;">
+      <div class="sb-label" style="margin:0;">Fonctions accessibles</div>
+      <button onclick="closeSidebar()" style="display:none;background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);" id="sb-close-btn">✕</button>
+    </div>`;
+  // Afficher bouton fermer uniquement sur mobile
+  const closeBtn=sb.querySelector('#sb-close-btn');
+  if(window.innerWidth<=768&&closeBtn)closeBtn.style.display='block';
+
+  if(!accessible.length){
+    sb.innerHTML+=`<div style="padding:20px 14px;font-size:12px;color:var(--muted);text-align:center;">Aucune fonction accessible</div>`;
+    return;
+  }
+
+  ["Commercial","Services"].forEach(secteur=>{
+    const sRoles=accessible.filter(r=>r.secteur===secteur);
     if(!sRoles.length)return;
     const sec=document.createElement("div");
-    sec.innerHTML=`<div style="padding:8px 14px 3px;font-size:9px;font-weight:800;color:var(--accent);letter-spacing:1.5px;text-transform:uppercase;background:#fef5f6">${s==="Commercial"?"🛍 "+s:"⚙️ "+s}</div>`;
+    sec.innerHTML=`<div style="padding:8px 14px 3px;font-size:9px;font-weight:800;color:var(--accent);letter-spacing:1.5px;text-transform:uppercase;background:#fef5f6">${secteur==="Commercial"?"🛍 "+secteur:"⚙️ "+secteur}</div>`;
     sb.appendChild(sec);
     sRoles.forEach(r=>{
       const s2=getRoleStats(r.id);
@@ -1157,7 +1287,11 @@ function renderSidebar(){
         <div class="rb-sub">${r.sous}</div>
         <div class="rb-bar-wrap"><div class="rb-bar" style="width:${s2.pct}%;background:${r.color}"></div></div>
         <div class="rb-ct">${s2.done}/${s2.total} tâches</div>`;
-      btn.onclick=()=>{currentRoleId=r.id;renderTaskView();renderSidebar();closeSidebar();};
+      btn.onclick=()=>{
+        viewMode='role'; rayonActif=null;
+        currentRoleId=r.id;
+        renderTaskView();renderSidebar();closeSidebar();
+      };
       sb.appendChild(btn);
     });
   });
@@ -1208,22 +1342,49 @@ function renderTasks(){
   const r=getRole(currentRoleId);
   const tasks=getAllTasks(currentRoleId).filter(t=>currentFreq==="ALL"||t.freq===currentFreq);
   const canEdit=canEditRole(currentRoleId);
+  const isAdmin=isDirecteur();
   const tl=document.getElementById("task-list");
   if(!tasks.length){tl.innerHTML=`<div style="text-align:center;padding:40px;color:var(--muted);">Aucune tâche pour ce filtre.</div>`;return;}
+  const now=new Date();
+  const hNow=now.getHours()*60+now.getMinutes();
   tl.innerHTML=tasks.map(t=>{
     const done=!!completions[ck(currentRoleId,t.id,t.freq)];
     const isCust=t.id.startsWith("c_");
-    return `<div class="task-item${done?" done-item":""}${!canEdit?" read-only":""}" onclick="${canEdit?`toggleTask('${t.id}','${t.freq}')`:""}" style="${done?`background:${r.light};border-color:${r.color}22`:""}" id="ti_${t.id}">
-      <div class="task-check" style="${done?`background:${r.color};border-color:${r.color}`:""}">${done?"✓":""}</div>
-      <div class="task-body">
+    const completionEntry=completionLog.find(e=>e.taskId===t.id&&e.roleId===currentRoleId&&e.period===periodKey(t.freq));
+    // Indicateur deadline pour admin
+    let deadlineIndicator='';
+    if(isAdmin && isCust && t.deadline){
+      const [dh,dm]=t.deadline.split(':').map(Number);
+      const deadlineMin=dh*60+dm;
+      if(done && completionEntry){
+        const doneAt=new Date(completionEntry.completedAt);
+        const doneMin=doneAt.getHours()*60+doneAt.getMinutes();
+        const onTime=doneMin<=deadlineMin;
+        const doneTimeStr=doneAt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+        const assigneeName=usersData.find(u=>u.id===t.assignedTo)?.name||'?';
+        deadlineIndicator=`<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:${onTime?'#eafaf1':'#fdecea'};color:${onTime?'#27ae60':'#e74c3c'};">${onTime?'🟢':'🔴'} ${doneTimeStr} · ${assigneeName}</span>`;
+      } else {
+        // Pas encore fait
+        const enRetard=hNow>deadlineMin;
+        const assigneeName=usersData.find(u=>u.id===t.assignedTo)?.name||'?';
+        deadlineIndicator=`<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:${enRetard?'#fdecea':'#fef9f0'};color:${enRetard?'#e74c3c':'#e67e22'};">${enRetard?'🔴':'⏳'} Avant ${t.deadline} · ${assigneeName}</span>`;
+      }
+    }
+    const clickHandler=(canEdit&&!isAdmin)?`toggleTask('${t.id}','${t.freq}')`:"";
+    const itemStyle=done?`background:${r.light};border-color:${r.color}22`:"";
+    const checkStyle=done?`background:${r.color};border-color:${r.color}`:"";
+    const checkExtra=(!canEdit||isAdmin)?"opacity:0.4;cursor:default":"";
+    return `<div class="task-item${done?" done-item":""}${!canEdit?" read-only":""}" onclick="${clickHandler}" style="${itemStyle}" id="ti_${t.id}">
+      <div class="task-check" style="${checkStyle}${checkExtra}">${done?"✓":""}</div>
+      <div class="task-body" style="flex:1;">
         <div class="task-top"><span class="task-label">${t.label}</span>
           <span class="fbadge" style="background:${FC[t.freq]}18;color:${FC[t.freq]}">${FL[t.freq]}</span>
           ${isCust?`<span class="cbadge">Personnalisé</span>`:""}
         </div>
         ${t.note?`<div class="task-note">${t.note}</div>`:""}
+        ${deadlineIndicator?`<div style="margin-top:5px;">${deadlineIndicator}</div>`:""}
       </div>
-      ${canEdit?`<button class="task-edit-btn" onclick="event.stopPropagation();openEditModal('${currentRoleId}','${t.id}',${isCust})" title="Modifier">✏️</button>`:""}
-      ${isCust&&canEdit?`<button class="task-del" onclick="event.stopPropagation();delCustom('${t.id}')">✕</button>`:""}
+      ${isCust&&isAdmin?`<button class="task-del" onclick="event.stopPropagation();delCustom('${t.id}')" title="Supprimer">✕</button>`:""}
     </div>`;
   }).join("");
 }
@@ -1238,17 +1399,34 @@ function renderProgressBar(){
   document.getElementById("progress-bar").style.background=r.color;
 }
 function toggleTask(tid,freq){
+  // L'admin ne coche pas — uniquement les users
+  if(isDirecteur()){showToast("Le Directeur suit les tâches, il ne les coche pas","#f39c12");return;}
   if(!canEditRole(currentRoleId)){showToast("Accès non autorisé","#e74c3c");return;}
   const key=ck(currentRoleId,tid,freq);const isDone=!completions[key];completions[key]=isDone;
   const r=getRole(currentRoleId);const task=getAllTasks(currentRoleId).find(t=>t.id===tid);
   if(isDone&&task){
-    completionLog.push({roleId:currentRoleId,roleLabel:r.label,secteur:r.secteur,taskId:tid,taskLabel:task.label,freq,period:periodKey(freq),completedAt:new Date().toISOString(),evaluatedBy:currentUser?.id});
+    completionLog.push({roleId:currentRoleId,roleLabel:r.label,secteur:r.secteur,taskId:tid,taskLabel:task.label,freq,period:periodKey(freq),completedAt:new Date().toISOString(),evaluatedBy:currentUser?.id,userId:currentUser?.id});
     if(completionLog.length>5000)completionLog=completionLog.slice(-5000);
-  } else {completionLog=completionLog.filter(e=>!(e.roleId===currentRoleId&&e.taskId===tid&&e.period===periodKey(freq)));}
+  } else {completionLog=completionLog.filter(e=>!(e.roleId===currentRoleId&&e.taskId===tid&&e.period===periodKey(freq)&&e.userId===currentUser?.id));}
   saveData();broadcastUpdate();renderTasks();renderRoleHeader();renderProgressBar();renderSidebar();
 }
 function setFreq(f){currentFreq=f;renderControls();renderTasks();renderProgressBar();}
-function toggleAddForm(){if(!isDirecteur()){showToast('Accès réservé au Directeur','#e74c3c');return;}const f=document.getElementById("add-form");f.classList.toggle("open");if(f.classList.contains("open"))document.getElementById("nt-input").focus();}
+function toggleAddForm(){
+  if(!isDirecteur()){showToast('Accès réservé au Directeur','#e74c3c');return;}
+  const f=document.getElementById("add-form");
+  f.classList.toggle("open");
+  if(f.classList.contains("open")){
+    // Peupler la liste des utilisateurs
+    const sel=document.getElementById("nt-assignee");
+    if(sel){
+      sel.innerHTML='<option value="">-- Choisir un utilisateur --</option>';
+      usersData.filter(u=>u.active&&u.id!==currentUser.id).forEach(u=>{
+        sel.innerHTML+=`<option value="${u.id}">${u.name} (@${u.username})</option>`;
+      });
+    }
+    document.getElementById("nt-input").focus();
+  }
+}
 function closeAddForm(){document.getElementById("add-form").classList.remove("open");document.getElementById("nt-input").value="";}
 function updatePeriodeFields(){
   const freq=document.getElementById("nt-freq").value;
@@ -1260,23 +1438,33 @@ function saveCustomTask(){
   if(!isDirecteur()){showToast('Accès réservé au Directeur','#e74c3c');return;}
   const label=document.getElementById("nt-input").value.trim();if(!label)return;
   const freq=document.getElementById("nt-freq").value;
+  const assignedTo=document.getElementById("nt-assignee")?.value||null;
   const id="c_"+Date.now();
-  let periodeNote="";
+  let periodeNote="",deadline="",jours=[],datesMois=[];
+
   if(freq==="Q"){
     const moment=document.querySelector('input[name="q-moment"]:checked')?.value||"MATIN";
-    periodeNote="⏰ "+moment;
+    deadline=moment==="MATIN"?"12:00":moment==="SOIR"?"22:00":"22:00";
+    periodeNote="⏰ "+moment+" (avant "+(moment==="MATIN"?"12h":"22h")+")";
   } else if(freq==="H"){
-    const fois=document.getElementById("nt-h-fois").value;
-    const jours=[...document.querySelectorAll(".jour-chk:checked")].map(c=>c.value);
-    periodeNote=`📅 ${fois}×/sem`+(jours.length?` — ${jours.join(", ")}`:"");
+    jours=[...document.querySelectorAll(".jour-chk:checked")].map(c=>c.value);
+    const moment=document.querySelector('input[name="h-moment"]:checked')?.value||"MATIN";
+    deadline=moment==="MATIN"?"12:00":"22:00";
+    periodeNote=`📅 ${jours.length?jours.join(", "):"Tous les jours"} — ${moment} avant ${moment==="MATIN"?"12h":"22h"}`;
   } else if(freq==="M"){
-    const fois=document.getElementById("nt-m-fois").value;
     const datePrec=document.getElementById("nt-m-date").value.trim();
-    periodeNote=`🗓️ ${fois}×/mois`+(datePrec?` — ${datePrec}`:"");
+    const moment=document.querySelector('input[name="m-moment"]:checked')?.value||"MATIN";
+    deadline=moment==="MATIN"?"12:00":"22:00";
+    periodeNote=`🗓️ ${datePrec||"À définir"} — ${moment} avant ${moment==="MATIN"?"12h":"22h"}`;
+    datesMois=datePrec?datePrec.split(",").map(d=>d.trim()):[];
   }
+
+  const task={id,label,freq,note:periodeNote,deadline,jours,datesMois,assignedTo,createdBy:currentUser.id,createdAt:new Date().toISOString()};
   if(!customTasks[currentRoleId])customTasks[currentRoleId]=[];
-  customTasks[currentRoleId].push({id,label,freq,note:periodeNote});
+  customTasks[currentRoleId].push(task);
   saveData();broadcastUpdate();closeAddForm();renderTasks();renderProgressBar();
+  const assigneeName=assignedTo?(usersData.find(u=>u.id===assignedTo)?.name||'?'):'tous';
+  showToast('✅ Tâche assignée à '+assigneeName,'#27ae60');
 }
 function delCustom(id){
   if(!confirm("Supprimer cette tâche ?"))return;
@@ -1955,6 +2143,23 @@ function initFirebase(cfg){
             localStorage.setItem('hm_users',JSON.stringify(usersData));
             _fbUsersLoaded=true;
             renderUsersList();
+          }
+        });
+        // ── Sync customTasks en temps réel ──
+        _fbDb.ref('hm_data/customTasks').on('value',s=>{
+          const fbCust=s.val();
+          if(fbCust && typeof fbCust==='object'){
+            customTasks=fbCust;
+            localStorage.setItem('hm_cust',JSON.stringify(customTasks));
+            if(currentUser) renderTasks();
+          }
+        });
+        // ── Sync taskOverrides en temps réel ──
+        _fbDb.ref('hm_data/taskOverrides').on('value',s=>{
+          const fbOv=s.val();
+          if(fbOv && typeof fbOv==='object'){
+            taskOverrides=fbOv;
+            localStorage.setItem('hm_overrides',JSON.stringify(taskOverrides));
           }
         });
       } else {
