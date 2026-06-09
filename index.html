@@ -1824,8 +1824,22 @@ function confirmReset(){
 // ══════════════════════════════════════════════════════════════
 let _fbApp=null,_fbDb=null,_fbConnected=false,_fbLiveRef=null,_fbUnsubscribe=null;
 
+// ── Configuration Firebase intégrée (par défaut) ──
+const FIREBASE_DEFAULT_CONFIG = {
+  apiKey: "AlzaSyDjg2CYZt3VsGVnfCkknPjTeRyzAEGkfgg",
+  databaseURL: "https://marjane08-suivi-default-rtdb.europe-west1.firebasedatabase.app/",
+  projectId: "marjane08-suivi",
+  appId: "1:772493282693:web:03c04c5a01e24b6f5288ec",
+  authDomain: "marjane08-suivi.firebaseapp.com",
+  storageBucket: "marjane08-suivi.firebasestorage.app",
+  messagingSenderId: "772493282693"
+};
+
 function loadFirebaseConfig(){
-  try{return JSON.parse(localStorage.getItem('hm_fb_config')||'null');}catch(e){return null;}
+  try{
+    const saved = JSON.parse(localStorage.getItem('hm_fb_config')||'null');
+    return saved || FIREBASE_DEFAULT_CONFIG;
+  }catch(e){return FIREBASE_DEFAULT_CONFIG;}
 }
 function saveFirebaseConfig(){
   const cfg={
@@ -1861,9 +1875,12 @@ function renderFirebaseConfigForm(){
   if(!cfg)return;
   const f=id=>document.getElementById(id);
   if(f('fb-apiKey'))f('fb-apiKey').value=cfg.apiKey||'';
-  if(f('fb-databaseURL'))f('fb-databaseURL').value=cfg.databaseURL||'https://pilotage-2115e-default-rtdb.europe-west1.firebasedatabase.app';
+  if(f('fb-databaseURL'))f('fb-databaseURL').value=cfg.databaseURL||'';
   if(f('fb-projectId'))f('fb-projectId').value=cfg.projectId||'';
   if(f('fb-appId'))f('fb-appId').value=cfg.appId||'';
+  // Indiquer si c'est la config intégrée
+  const isDefault=!localStorage.getItem('hm_fb_config');
+  if(isDefault) showFirebaseStatus('🔒 Configuration intégrée — connexion automatique sur tous les appareils','#2980b9');
 }
 function initFirebase(cfg){
   try{
