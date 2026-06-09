@@ -1111,12 +1111,14 @@ function saveData(){
   localStorage.setItem("hm_cust",JSON.stringify(customTasks));
   localStorage.setItem("hm_log",JSON.stringify(completionLog));
   localStorage.setItem("hm_overrides",JSON.stringify(taskOverrides));
-  // Synchronisation Firebase — tâches partagées
-  if(_fbDb && _fbConnected){
-    _fbDb.ref('hm_cust').set(customTasks).catch(()=>{});
-    _fbDb.ref('hm_overrides').set(taskOverrides).catch(()=>{});
-    _fbDb.ref('hm_log').set(completionLog).catch(()=>{});
-  }
+  // Synchronisation Firebase — tâches partagées (uniquement si admin pour éviter conflits)
+  try{
+    if(_fbDb && _fbConnected && isDirecteur()){
+      _fbDb.ref('hm_cust').set(customTasks);
+      _fbDb.ref('hm_overrides').set(taskOverrides);
+      _fbDb.ref('hm_log').set(completionLog);
+    }
+  }catch(e){ console.warn('Firebase save error',e); }
 }
 function saveCompanyData(){localStorage.setItem("hm_company",JSON.stringify(companyData));}
 function saveUsers(){
@@ -2173,19 +2175,25 @@ function initFirebase(cfg){
             renderUsersList();
           }
         });
-        // ── Écoute tâches personnalisées ──
-        _fbDb.ref('hm_cust').on('value',s=>{
-          const v=s.val();
-          if(v){ customTasks=v; localStorage.setItem('hm_cust',JSON.stringify(v)); if(typeof renderTasks==='function')renderTasks(); if(typeof renderSidebar==='function')renderSidebar(); }
-        });
-        _fbDb.ref('hm_overrides').on('value',s=>{
-          const v=s.val();
-          if(v){ taskOverrides=v; localStorage.setItem('hm_overrides',JSON.stringify(v)); if(typeof renderTasks==='function')renderTasks(); }
-        });
-        _fbDb.ref('hm_log').on('value',s=>{
-          const v=s.val();
-          if(v){ completionLog=v; localStorage.setItem('hm_log',JSON.stringify(v)); }
-        });
+        // ── Écoute tâches personnalisées (safe, après login) ──
+        try{
+          _fbDb.ref('hm_cust').on('value',s=>{
+            const v=s.val();
+            if(v && typeof v==='object'){
+              customTasks=v;
+              localStorage.setItem('hm_cust',JSON.stringify(v));
+              if(currentUser && document.getElementById('task-list')){ try{ renderTasks(); renderSidebar(); }catch(e){} }
+            }
+          });
+          _fbDb.ref('hm_overrides').on('value',s=>{
+            const v=s.val();
+            if(v && typeof v==='object'){
+              taskOverrides=v;
+              localStorage.setItem('hm_overrides',JSON.stringify(v));
+              if(currentUser && document.getElementById('task-list')){ try{ renderTasks(); }catch(e){} }
+            }
+          });
+        }catch(e){ console.warn('listeners error',e); }
       } else {
         if(statusBar)showFirebaseStatus('⏳ Connexion Firebase en cours...','#f39c12');
       }
