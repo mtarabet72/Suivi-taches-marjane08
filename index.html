@@ -1231,7 +1231,7 @@ function saveCustomTask(){
   } else if(freq==="H"){
     const fois=document.getElementById("nt-h-fois").value;
     const jours=[...document.querySelectorAll(".jour-chk:checked")].map(c=>c.value);
-    periodeNote=`📅 ${fois}×/sem`+(jours.length?` — ${jours.join(", ")}":"");
+    periodeNote=`📅 ${fois}×/sem`+(jours.length?` — ${jours.join(", ")}`:"");
   } else if(freq==="M"){
     const fois=document.getElementById("nt-m-fois").value;
     const datePrec=document.getElementById("nt-m-date").value.trim();
