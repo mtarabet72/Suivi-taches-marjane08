@@ -1828,7 +1828,7 @@ function confirmReset(){
 // ══════════════════════════════════════════════════════════════
 // FIREBASE — INIT & CONFIG
 // ══════════════════════════════════════════════════════════════
-let _fbApp=null,_fbDb=null,_fbConnected=false,_fbLiveRef=null,_fbUnsubscribe=null;
+let _fbApp=null,_fbDb=null,_fbConnected=false,_fbLiveRef=null,_fbUnsubscribe=null,_fbUsersLoaded=false;
 
 // ── Configuration Firebase intégrée (par défaut) ──
 const FIREBASE_DEFAULT_CONFIG = {
@@ -1905,21 +1905,21 @@ function initFirebase(cfg){
         _fbDb.ref('hm_users').once('value').then(s=>{
           const fbUsers=s.val();
           if(fbUsers && Array.isArray(fbUsers) && fbUsers.length>0){
-            // Fusionner : Firebase est la source de vérité pour les users
             usersData=fbUsers;
             localStorage.setItem('hm_users',JSON.stringify(usersData));
             renderUsersList();
           } else if(usersData.length>0){
-            // Aucun user dans Firebase → on y pousse ce qu'on a en local
             _fbDb.ref('hm_users').set(usersData).catch(()=>{});
           }
-        }).catch(()=>{});
+          _fbUsersLoaded=true;
+        }).catch(()=>{ _fbUsersLoaded=true; });
         // ── Écoute en temps réel des changements users ──
         _fbDb.ref('hm_users').on('value',s=>{
           const fbUsers=s.val();
           if(fbUsers && Array.isArray(fbUsers) && fbUsers.length>0){
             usersData=fbUsers;
             localStorage.setItem('hm_users',JSON.stringify(usersData));
+            _fbUsersLoaded=true;
             renderUsersList();
           }
         });
@@ -2105,9 +2105,34 @@ function doLogin(){
     errEl.style.display = 'block';
     return;
   }
+
+  // Si Firebase est configuré mais users pas encore chargés → attendre
+  if(_fbDb && usersData.length <= 1 && !_fbUsersLoaded){
+    errEl.textContent = '⏳ Chargement des utilisateurs en cours...';
+    errEl.style.display = 'block';
+    errEl.style.color = '#f39c12';
+    // Attendre max 4 secondes que Firebase charge
+    _fbDb.ref('hm_users').once('value').then(function(s){
+      var fbUsers = s.val();
+      if(fbUsers && Array.isArray(fbUsers) && fbUsers.length > 0){
+        usersData = fbUsers;
+        localStorage.setItem('hm_users', JSON.stringify(usersData));
+      }
+      _fbUsersLoaded = true;
+      errEl.style.display = 'none';
+      doLogin(); // relancer
+    }).catch(function(){
+      _fbUsersLoaded = true;
+      errEl.style.display = 'none';
+      doLogin();
+    });
+    return;
+  }
+
   var hash = hashStr(pw);
   var user = usersData.find(function(u){ return u.username === un && u.passwordHash === hash && u.active; });
   if(!user){
+    errEl.style.color = '';
     errEl.textContent = 'Identifiant ou mot de passe incorrect.';
     errEl.style.display = 'block';
     document.getElementById('login-password').value = '';
