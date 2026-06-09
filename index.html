@@ -1475,7 +1475,7 @@ function saveUserFromModal(userId){
   const conflict=usersData.find(u=>u.username===username&&u.id!==userId);
   if(conflict){showToast('Cet identifiant est déjà utilisé','#e74c3c');return;}
   if(!userId){
-    const pw=document.getElementById('uf-pw').value;const pw2=document.getElementById('uf-pw2').value;
+    const pw=document.getElementById('uf-pw').value.trim();const pw2=document.getElementById('uf-pw2').value.trim();
     if(!pw){showToast('Mot de passe requis','#e74c3c');return;}
     if(pw!==pw2){showToast('Les mots de passe ne correspondent pas','#e74c3c');return;}
     usersData.push({id:'u_'+Date.now(),name,username,passwordHash:hashStr(pw),systemRole:sysRole,ownRoleId:ownRoleId||null,evaluableRoleIds:evalIds,active:true,createdAt:new Date().toISOString()});
@@ -2051,8 +2051,8 @@ window.addEventListener('beforeunload',()=>{saveData();saveCompanyData();});
 
 // ── doLogin reécrit robuste ──
 function doLogin(){
-  var un = (document.getElementById('login-username').value || '').trim();
-  var pw = document.getElementById('login-password').value || '';
+  var un = (document.getElementById('login-username').value || '').trim().toLowerCase();
+  var pw = (document.getElementById('login-password').value || '').trim();
   var errEl = document.getElementById('login-error');
   errEl.style.display = 'none';
   errEl.textContent = '';
