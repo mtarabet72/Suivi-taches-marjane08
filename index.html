@@ -663,10 +663,7 @@ input,select,textarea{font-family:'DM Sans',sans-serif;font-size:14px;}
   <!-- Gestion des utilisateurs (Directeur seulement) -->
   <div class="settings-card" id="users-mgmt-card">
     <h3>🔐 Gestion des Utilisateurs</h3>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">Créez des comptes pour chaque responsable. Définissez précisément les rôles qu'ils peuvent évaluer.</div>
-    <div style="margin-bottom:14px;">
-      <button class="btn-primary" onclick="openUserModal()">➕ Nouvel utilisateur</button>
-    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">Gérez les comptes et définissez les fonctions accessibles à chaque responsable.</div>
     <div class="users-list" id="users-list"></div>
   </div>
 
@@ -1347,24 +1344,50 @@ function closeModal(){document.getElementById('modal-overlay').classList.remove(
 function renderUsersList(){
   const list=document.getElementById('users-list');if(!list)return;
   if(!isDirecteur()){list.innerHTML='<div style="color:var(--muted);font-size:12px;">Accès réservé au Directeur.</div>';return;}
-  if(!usersData.length){list.innerHTML='<div style="color:var(--muted);font-size:12px;">Aucun utilisateur.</div>';return;}
-  list.innerHTML=usersData.map(u=>{
+
+  // Stats header
+  const total=usersData.length, actifs=usersData.filter(u=>u.active).length;
+  let html=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:10px 14px;background:linear-gradient(135deg,#0a1628,#102244);border-radius:10px;color:#fff;">
+    <div style="font-size:12px;font-weight:700;">👥 ${total} utilisateur${total>1?'s':''} · <span style="color:#4ade80;">${actifs} actif${actifs>1?'s':''}</span></div>
+    <button onclick="openUserModal()" style="background:#e63950;border:none;color:#fff;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;touch-action:manipulation;">➕ Ajouter</button>
+  </div>`;
+
+  if(!usersData.length){
+    html+='<div style="color:var(--muted);font-size:12px;text-align:center;padding:20px;">Aucun utilisateur créé.</div>';
+    list.innerHTML=html; return;
+  }
+
+  html+=usersData.map(u=>{
     const rc=ROLE_COLORS[u.systemRole]||'#888';
-    return `<div class="user-card${u.active?'':' inactive'}">
-      <div class="user-avatar" style="background:${rc}">${u.name.charAt(0).toUpperCase()}</div>
-      <div class="user-info">
-        <div class="user-name">${u.name} ${u.id===currentUser?.id?'<span style="font-size:9px;color:#27ae60;font-weight:700;">(Vous)</span>':''}</div>
-        <div class="user-meta">@${u.username} · <span class="user-role-badge" style="background:${rc}18;color:${rc}">${ROLE_LABELS[u.systemRole]||u.systemRole}</span></div>
-        ${u.ownRoleId?`<div style="font-size:10px;color:var(--muted);margin-top:3px;">Rôle propre: ${ROLES.find(r=>r.id===u.ownRoleId)?.label||u.ownRoleId}</div>`:''}
-        ${(u.evaluableRoleIds||[]).length?`<div style="font-size:10px;color:var(--muted);">Évalue: ${(u.evaluableRoleIds||[]).map(id=>ROLES.find(r=>r.id===id)?.icon||id).join(' ')}</div>`:''}
+    const ownRole=u.ownRoleId?ROLES.find(r=>r.id===u.ownRoleId):null;
+    const evalRoles=(u.evaluableRoleIds||[]).map(id=>ROLES.find(r=>r.id===id)).filter(Boolean);
+    const evalBadges=evalRoles.map(r=>`<span style="display:inline-flex;align-items:center;gap:3px;background:${r.light||'#f0f2f5'};color:${r.color||'#555'};border:1px solid ${r.color||'#ccc'}22;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;">${r.icon} ${r.label}</span>`).join('');
+    return `<div class="user-card${u.active?'':' inactive'}" style="flex-direction:column;align-items:stretch;gap:10px;padding:14px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div class="user-avatar" style="background:${rc}">${u.name.charAt(0).toUpperCase()}</div>
+        <div class="user-info" style="flex:1;">
+          <div class="user-name">${u.name} ${u.id===currentUser?.id?'<span style="font-size:9px;color:#27ae60;font-weight:700;">(Vous)</span>':''} ${!u.active?'<span style="font-size:9px;color:#e74c3c;font-weight:700;">INACTIF</span>':''}</div>
+          <div class="user-meta" style="margin-top:3px;">
+            <span style="margin-right:6px;">@${u.username}</span>
+            <span class="user-role-badge" style="background:${rc}18;color:${rc}">${ROLE_LABELS[u.systemRole]||u.systemRole}</span>
+            ${ownRole?`<span style="margin-left:6px;font-size:10px;color:var(--muted);">Poste: ${ownRole.icon} ${ownRole.label}</span>`:''}
+          </div>
+        </div>
+        <div class="user-actions">
+          ${u.active?`<button class="user-btn" onclick="openUserModal('${u.id}')" title="Modifier">✏️</button><button class="user-btn" onclick="resetUserPw('${u.id}')" title="Réinitialiser MDP">🔑</button>`:''}
+          ${u.id!==currentUser?.id?`<button class="user-btn${u.active?' danger':''}" onclick="toggleUserActive('${u.id}')" title="${u.active?'Désactiver':'Réactiver'}">${u.active?'🚫':'✅'}</button>`:''}
+          ${u.id!==currentUser?.id?`<button class="user-btn danger" onclick="deleteUser('${u.id}')" title="Supprimer">🗑️</button>`:''}
+        </div>
       </div>
-      <div class="user-actions">
-        ${u.active?`<button class="user-btn" onclick="openUserModal('${u.id}')" title="Modifier">✏️</button><button class="user-btn" onclick="resetUserPw('${u.id}')" title="Réinitialiser MDP">🔑</button>`:''}
-        ${u.id!==currentUser?.id?`<button class="user-btn${u.active?' danger':''}" onclick="toggleUserActive('${u.id}')" title="${u.active?'Désactiver':'Réactiver'}">${u.active?'🚫':'✅'}</button>`:''}
-        ${u.id!==currentUser?.id?`<button class="user-btn danger" onclick="deleteUser('${u.id}')" title="Supprimer">🗑️</button>`:''}
-      </div>
+      ${evalRoles.length?`
+      <div style="padding-top:8px;border-top:1px solid var(--border);">
+        <div style="font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">📋 Fonctions évaluées (${evalRoles.length})</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;">${evalBadges}</div>
+      </div>`:`<div style="padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:#e74c3c;">⚠️ Aucune fonction assignée</div>`}
     </div>`;
   }).join('');
+
+  list.innerHTML=html;
 }
 
 function openUserModal(userId=null){
@@ -1456,11 +1479,11 @@ function saveUserFromModal(userId){
     if(!pw){showToast('Mot de passe requis','#e74c3c');return;}
     if(pw!==pw2){showToast('Les mots de passe ne correspondent pas','#e74c3c');return;}
     usersData.push({id:'u_'+Date.now(),name,username,passwordHash:hashStr(pw),systemRole:sysRole,ownRoleId:ownRoleId||null,evaluableRoleIds:evalIds,active:true,createdAt:new Date().toISOString()});
-    showToast('✅ Utilisateur créé','#27ae60');
+    showToast(`✅ ${name} créé — ${evalIds.length} fonction(s) assignée(s)`,'#27ae60');
   } else {
     const u=usersData.find(x=>x.id===userId);if(!u)return;
     u.name=name;u.username=username;u.systemRole=sysRole;u.ownRoleId=ownRoleId||null;u.evaluableRoleIds=evalIds;
-    showToast('✅ Utilisateur modifié','#27ae60');
+    showToast(`✅ ${name} modifié — ${evalIds.length} fonction(s) assignée(s)`,'#27ae60');
   }
   saveUsers();closeModal();renderUsersList();
 }
