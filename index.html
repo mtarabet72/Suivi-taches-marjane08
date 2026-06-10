@@ -893,19 +893,19 @@ function loadData(){
   try{taskOverrides=JSON.parse(localStorage.getItem("hm_overrides")||"{}");}catch(e){}
   try{companyData=Object.assign({nom:"",logo:null,address:"",phone:"",email:"",web:"",directorName:"",directorTitle:"Directeur",directorPhone:"",directorEmail:"",orgName:"",orgRef:"",orgAddress:"",orgContact:"",orgPerson:""},JSON.parse(localStorage.getItem("hm_company")||"{}"));}catch(e){}
   try{usersData=JSON.parse(localStorage.getItem("hm_users")||"[]");}catch(e){usersData=[];}
-  // Garantir le compte admin — créer si absent, sinon préserver le hash existant
+  // Toujours garantir le compte admin même si localStorage est bloqué
   const existingAdmin = usersData.find(u=>u.username==='admin');
   if(!existingAdmin){
     const adminDef={id:'u_admin',name:'Directeur',username:'admin',passwordHash:hashStr('1234'),systemRole:'directeur',ownRoleId:null,evaluableRoleIds:ROLES.map(r=>r.id),active:true,createdAt:new Date().toISOString()};
     if(usersData.length===0){usersData=[adminDef];}else{usersData.unshift(adminDef);}
     try{saveUsers();}catch(e){}
   } else {
-    existingAdmin.active = true;
-    existingAdmin.systemRole = existingAdmin.systemRole || 'directeur';
-    existingAdmin.evaluableRoleIds = existingAdmin.evaluableRoleIds || ROLES.map(r=>r.id);
-    // Ne réinitialiser le hash QUE si complètement absent — ne jamais écraser un hash valide existant
-    if(!existingAdmin.passwordHash){
+    // Migration : si le hash stocké ne correspond pas au hash actuel de '1234', c'est un ancien sel — on recrée le compte admin proprement
+    if(existingAdmin.passwordHash !== hashStr('1234') && existingAdmin._pwChanged !== true){
       existingAdmin.passwordHash = hashStr('1234');
+      existingAdmin.active = true;
+      existingAdmin.systemRole = existingAdmin.systemRole || 'directeur';
+      existingAdmin.evaluableRoleIds = existingAdmin.evaluableRoleIds || ROLES.map(r=>r.id);
       try{saveUsers();}catch(e){}
     }
   }
@@ -960,22 +960,34 @@ function showLoginScreen(){
 // doLogin() déplacé plus haut avec les listeners
 function onLoginSuccess(){
   const uid=currentUser?currentUser.id:'guest';
-  // Charger completions depuis localStorage en premier
+  // Charger completions depuis localStorage d'abord
   try{
     const stored=localStorage.getItem('hm_comp_'+uid);
-    completions=stored?JSON.parse(stored):{};
+    if(stored){completions=JSON.parse(stored);}
+    else{completions={};}
   }catch(e){completions={};}
-
-  // ── Charger _eventsCache si admin déjà connecté à Firebase ──
+  // Si admin : fusionner toutes les completions Firebase
   if(_fbDb && _fbConnected && isDirecteur()){
-    _fbDb.ref('hm_events').once('value').then(s=>{
-      if(s.val() && typeof s.val()==='object') _eventsCache=s.val();
-      renderDashboard();
+    _fbDb.ref('hm_data/completions').once('value').then(s=>{
+      const allComp=s.val();
+      if(allComp && typeof allComp==='object'){
+        let merged={};
+        Object.values(allComp).forEach(uc=>{ if(uc)Object.assign(merged,uc); });
+        completions=merged;
+        renderTasks(); renderProgressBar(); renderDashboard();
+      }
+    }).catch(()=>{});
+  } else if(_fbDb && _fbConnected){
+    // User : charger ses propres completions depuis Firebase
+    _fbDb.ref('hm_data/completions/'+uid).once('value').then(s=>{
+      const fbComp=s.val();
+      if(fbComp && typeof fbComp==='object'){
+        completions=fbComp;
+        localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions));
+        renderTasks(); renderProgressBar();
+      }
     }).catch(()=>{});
   }
-  // Les listeners temps réel (completions + events) sont dans initFirebase > .info/connected
-  // Ils s'activent automatiquement dès que Firebase est prêt, quel que soit le timing du login.
-
   document.getElementById('login-overlay').classList.add('hidden');
   updateHeaderUser();
   applyAccessControl();
@@ -989,9 +1001,6 @@ function onLoginSuccess(){
 function doLogout(){
   currentUser=null;
   sessionStorage.removeItem('hm_session');
-  // Détacher les listeners Firebase admin pour éviter les fuites
-  if(window._adminCompRef){try{window._adminCompRef.off('value',window._adminCompCb);}catch(e){} window._adminCompRef=null;window._adminCompCb=null;}
-  if(window._adminEvtRef) {try{window._adminEvtRef.off('value',window._adminEvtCb);}catch(e){}  window._adminEvtRef=null; window._adminEvtCb=null;}
   document.getElementById('login-username').value='';
   document.getElementById('login-password').value='';
   showLoginScreen();
@@ -1241,27 +1250,9 @@ function renderDashboard(){
         <div class="rc-bar-wrap"><div class="rc-bar" style="width:${pct}%;background:${r.color}"></div></div>
         <div class="rc-count">${s.done}/${s.total} · ${r.sous}</div>
         <div class="rc-tasks-preview"><div style="font-size:10px;font-weight:700;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:1px;">Tâches</div>
-        ${tasks.map(t=>{
-            const done=completions[ck(r.id,t.id,t.freq)];
-            // Chercher l'événement de validation dans le cache
-            const today=new Date().toISOString().slice(0,10);
-            const evtKey=Object.keys(_eventsCache||{}).find(k=>{
-              const e=_eventsCache[k];
-              return e && e.roleId===r.id && e.taskId===t.id && e.period===today && e.isDone;
-            });
-            const evt=evtKey?_eventsCache[evtKey]:null;
-            const indicator=evt
-              ? \`<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:8px;background:\${evt.couleur}18;color:\${evt.couleur};white-space:nowrap;">\${evt.statut==='VERT'?'🟢':'🔴'} \${evt.heure} · \${evt.userName||'?'}</span>\`
-              : (done ? \`<span style="font-size:10px;color:#27ae60;font-weight:700;">✓</span>\` : '');
-            return \`<div class="rct-item" style="align-items:center;">
-              <div class="rct-dot" style="background:\${done?r.color:'#e0e4ea'};flex-shrink:0;"></div>
-              <span style="color:\${done?'#555':'var(--text)'};text-decoration:\${done?'line-through':''};flex:1;">\${t.label}</span>
-              <span style="color:\${FC[t.freq]};font-size:9px;font-weight:700;margin:0 4px;">\${FL[t.freq][0]}</span>
-              \${indicator}
-            </div>\`;
-          }).join("")}
-        </div></div>\`;}).join("")}
-    </div></div>\`;
+        ${tasks.map(t=>{const done=completions[ck(r.id,t.id,t.freq)];return `<div class="rct-item"><div class="rct-dot" style="background:${done?r.color:"#e0e4ea"}"></div><span style="color:${done?"#555":"var(--text)"};text-decoration:${done?"line-through":""};flex:1">${t.label}</span><span style="color:${FC[t.freq]};font-size:9px;font-weight:700">${FL[t.freq][0]}</span></div>`;}).join("")}
+        </div></div>`;}).join("")}
+    </div></div>`;
   });
   document.getElementById("dash-secteurs").innerHTML=html;
 }
@@ -1429,11 +1420,6 @@ function toggleTask(tid,freq){
     if(completionLog.length>5000)completionLog=completionLog.slice(-5000);
   } else {completionLog=completionLog.filter(e=>!(e.roleId===currentRoleId&&e.taskId===tid&&e.period===periodKey(freq)&&e.userId===currentUser?.id));}
   saveData();
-  // ── Écriture immédiate Firebase pour que l'admin reçoive en temps réel ──
-  if(_fbDb && _fbConnected){
-    const uid2=currentUser?currentUser.id:'guest';
-    _fbDb.ref('hm_data/completions/'+uid2).set(completions).catch(()=>{});
-  }
   // ── Notification temps réel vers l'admin ──
   pushTaskEventToAdmin(tid, freq, isDone, task, r, now);
   renderTasks();renderRoleHeader();renderProgressBar();renderSidebar();
@@ -2152,21 +2138,11 @@ function initFirebase(cfg){
         showFirebaseStatus('✅ Firebase connecté — Suivi live actif','#27ae60');
         showToast('🔥 Firebase connecté !','#27ae60');
         // ── Sync utilisateurs depuis Firebase ──
-        // Fusionner les users Firebase en préservant TOUS les mots de passe locaux existants
-        function mergeFirebaseUsers(fbUsers){
-          if(!fbUsers || !Array.isArray(fbUsers) || !fbUsers.length) return;
-          // Conserver tous les hash locaux (pas seulement _pwChanged) — ils sont toujours plus fiables
-          const localPwMap={};
-          usersData.forEach(u=>{ if(u.passwordHash) localPwMap[u.id]=u.passwordHash; });
-          usersData=fbUsers;
-          // Réappliquer les hash locaux pour chaque user qui en avait un
-          usersData.forEach(u=>{ if(localPwMap[u.id]){ u.passwordHash=localPwMap[u.id]; } });
-          localStorage.setItem('hm_users',JSON.stringify(usersData));
-        }
         _fbDb.ref('hm_users').once('value').then(s=>{
           const fbUsers=s.val();
           if(fbUsers && Array.isArray(fbUsers) && fbUsers.length>0){
-            mergeFirebaseUsers(fbUsers);
+            usersData=fbUsers;
+            localStorage.setItem('hm_users',JSON.stringify(usersData));
             renderUsersList();
           } else if(usersData.length>0){
             _fbDb.ref('hm_users').set(usersData).catch(()=>{});
@@ -2177,7 +2153,8 @@ function initFirebase(cfg){
         _fbDb.ref('hm_users').on('value',s=>{
           const fbUsers=s.val();
           if(fbUsers && Array.isArray(fbUsers) && fbUsers.length>0){
-            mergeFirebaseUsers(fbUsers);
+            usersData=fbUsers;
+            localStorage.setItem('hm_users',JSON.stringify(usersData));
             _fbUsersLoaded=true;
             renderUsersList();
           }
@@ -2199,42 +2176,31 @@ function initFirebase(cfg){
             localStorage.setItem('hm_overrides',JSON.stringify(taskOverrides));
           }
         });
-        // ── Écoute completions : admin fusionne tout, user recharge les siennes ──
+        // ── Écoute completions de TOUS les users (pour l'admin) ──
         _fbDb.ref('hm_data/completions').on('value',s=>{
           const allComp=s.val();
           if(!allComp || typeof allComp!=='object') return;
           if(isDirecteur()){
+            // Admin : fusionner toutes les completions de tous les users
             let merged={};
-            Object.values(allComp).forEach(uc=>{ if(uc && typeof uc==='object') Object.assign(merged,uc); });
+            Object.values(allComp).forEach(userComp=>{
+              if(userComp && typeof userComp==='object') Object.assign(merged,userComp);
+            });
             completions=merged;
-            if(currentUser){ renderTasks(); renderProgressBar(); renderSidebar(); renderDashboard(); }
-            if(_livePanel){ renderLivePanelFromEvents(_eventsCache); }
+            if(currentUser) { renderTasks(); renderProgressBar(); renderSidebar(); renderDashboard(); }
+            // Rafraîchir live panel si ouvert
+            if(_livePanel){
+              _fbDb.ref('hm_events').once('value').then(es=>{
+                renderLivePanelFromEvents(es.val()||{});
+              }).catch(()=>{});
+            }
           } else if(currentUser){
+            // User : recharger ses propres completions
             const uid=currentUser.id;
             if(allComp[uid]){
               completions=allComp[uid];
               localStorage.setItem('hm_comp_'+uid,JSON.stringify(completions));
               renderTasks(); renderProgressBar();
-            }
-          }
-        });
-        // ── Écoute hm_events : cache global + dashboard admin + live panel ──
-        _fbDb.ref('hm_events').on('value',s=>{
-          const evts=s.val();
-          if(!evts || typeof evts!=='object') return;
-          _eventsCache=evts; // toujours à jour pour renderDashboard
-          if(!isDirecteur()) return;
-          if(_livePanel){ renderLivePanelFromEvents(evts); }
-          if(currentUser){ renderDashboard(); } // rafraîchit les indicateurs verts/rouges
-          // Toast discret si panel fermé - uniquement événements frais (< 8 sec)
-          if(!_livePanel){
-            const today=new Date().toISOString().slice(0,10);
-            const recent=Object.values(evts)
-              .filter(e=>e && e.period===today && e.isDone)
-              .sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt))[0];
-            if(recent){
-              const age=(Date.now()-new Date(recent.completedAt).getTime())/1000;
-              if(age<8) showToast('\u2705 '+(recent.userName||'?')+' : '+(recent.taskLabel||'').substring(0,35), recent.couleur||'#27ae60');
             }
           }
         });
@@ -2263,7 +2229,6 @@ function initFirebaseOnStartup(){
 // LIVE ADMIN — SUIVI EN TEMPS RÉEL (Firebase Realtime DB)
 // ══════════════════════════════════════════════════════════════
 let _livePanel=null;
-let _eventsCache={}; // cache global des événements hm_events pour le dashboard admin
 
 // ── Nouvelle architecture : push événement tâche vers admin ──
 function pushTaskEventToAdmin(tid, freq, isDone, task, role, now){
@@ -2378,13 +2343,14 @@ function openLivePanel(){
 function startLivePolling(){
   stopLivePolling();
   if(_fbDb&&_fbConnected){
-    // Réutiliser le listener global admin si disponible (évite doublon Firebase)
-    const ref = window._adminEvtRef || _fbDb.ref('hm_events');
-    _fbLiveRef=ref;
-    _fbUnsubscribe=ref.on('value', snap=>{
+    // Écoute hm_events : chaque fois qu'un user coche/décoche une tâche
+    _fbLiveRef=_fbDb.ref('hm_events');
+    _fbUnsubscribe=_fbLiveRef.on('value', snap=>{
       const evts=snap.val();
-      if(evts && typeof evts==='object') renderLivePanelFromEvents(evts);
-    }, ()=>{ startLocalPolling(); });
+      if(evts && typeof evts==='object'){
+        renderLivePanelFromEvents(evts);
+      }
+    }, err=>{ startLocalPolling(); });
   } else {
     startLocalPolling();
   }
@@ -2565,74 +2531,42 @@ function doLogin(){
     return;
   }
 
-  var hash = hashStr(pw);
-
-  function tryLogin(users){
-    return users.find(function(u){
-      return u.username === un && u.passwordHash === hash && u.active;
-    });
-  }
-
-  function loginSuccess(user){
-    errEl.style.display = 'none';
-    currentUser = user;
-    sessionStorage.setItem('hm_session', JSON.stringify({userId: user.id, loginAt: new Date().toISOString()}));
-    onLoginSuccess();
-  }
-
-  function loginFail(){
-    errEl.style.color = '';
-    errEl.textContent = 'Identifiant ou mot de passe incorrect.';
+  // Si Firebase est configuré mais users pas encore chargés → attendre
+  if(_fbDb && usersData.length <= 1 && !_fbUsersLoaded){
+    errEl.textContent = '⏳ Chargement des utilisateurs en cours...';
     errEl.style.display = 'block';
-    document.getElementById('login-password').value = '';
-  }
-
-  // ── Tentative 1 : données locales ──
-  var user = tryLogin(usersData);
-  if(user){ loginSuccess(user); return; }
-
-  // ── Tentative 2 : Firebase (même si pas encore _fbConnected — on tente quand même) ──
-  if(_fbDb){
-    errEl.textContent = '⏳ Connexion en cours...';
     errEl.style.color = '#f39c12';
-    errEl.style.display = 'block';
-
-    // Timeout 5 secondes max
-    var done = false;
-    var timer = setTimeout(function(){
-      if(done) return;
-      done = true;
-      loginFail();
-    }, 5000);
-
+    // Attendre max 4 secondes que Firebase charge
     _fbDb.ref('hm_users').once('value').then(function(s){
-      if(done) return;
-      done = true;
-      clearTimeout(timer);
       var fbUsers = s.val();
       if(fbUsers && Array.isArray(fbUsers) && fbUsers.length > 0){
-        // Préserver TOUS les hash locaux (ils sont plus fiables que Firebase)
-        var localPwMap = {};
-        usersData.forEach(function(u){ if(u.passwordHash) localPwMap[u.id] = u.passwordHash; });
         usersData = fbUsers;
-        usersData.forEach(function(u){ if(localPwMap[u.id]){ u.passwordHash = localPwMap[u.id]; } });
         localStorage.setItem('hm_users', JSON.stringify(usersData));
-        _fbUsersLoaded = true;
       }
-      var user2 = tryLogin(usersData);
-      if(user2){ loginSuccess(user2); }
-      else{ loginFail(); }
+      _fbUsersLoaded = true;
+      errEl.style.display = 'none';
+      doLogin(); // relancer
     }).catch(function(){
-      if(done) return;
-      done = true;
-      clearTimeout(timer);
-      loginFail();
+      _fbUsersLoaded = true;
+      errEl.style.display = 'none';
+      doLogin();
     });
     return;
   }
 
-  // ── Pas de Firebase — échec ──
-  loginFail();
+  var hash = hashStr(pw);
+  var user = usersData.find(function(u){ return u.username === un && u.passwordHash === hash && u.active; });
+  if(!user){
+    errEl.style.color = '';
+    errEl.textContent = 'Identifiant ou mot de passe incorrect.';
+    errEl.style.display = 'block';
+    document.getElementById('login-password').value = '';
+    return;
+  }
+  errEl.style.display = 'none';
+  currentUser = user;
+  sessionStorage.setItem('hm_session', JSON.stringify({userId: user.id, loginAt: new Date().toISOString()}));
+  onLoginSuccess();
 }
 
 // ── resetLoginData global ──
