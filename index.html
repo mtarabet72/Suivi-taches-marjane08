@@ -966,50 +966,47 @@ function onLoginSuccess(){
     if(stored){completions=JSON.parse(stored);}
     else{completions={};}
   }catch(e){completions={};}
-  // Si admin : écoute PERSISTANTE de toutes les completions + events
+  // ── Admin : listeners PERSISTANTS Firebase (temps réel) ──
   if(_fbDb && _fbConnected && isDirecteur()){
-    // Détacher d'éventuels anciens listeners
-    if(window._adminCompRef) window._adminCompRef.off('value', window._adminCompCb);
-    if(window._adminEventsRef) window._adminEventsRef.off('value', window._adminEventsCb);
+    // Détacher d'éventuels anciens listeners pour éviter les doublons
+    if(window._adminCompRef)  try{window._adminCompRef.off('value',window._adminCompCb);}catch(e){}
+    if(window._adminEvtRef)   try{window._adminEvtRef.off('value',window._adminEvtCb);}catch(e){}
 
-    // Listener completions : se déclenche à chaque coche d'un user
+    // Listener 1 : completions — se déclenche à chaque coche d'un user
     window._adminCompRef = _fbDb.ref('hm_data/completions');
-    window._adminCompCb = window._adminCompRef.on('value', s=>{
+    window._adminCompCb  = window._adminCompRef.on('value', s=>{
       const allComp=s.val();
       if(allComp && typeof allComp==='object'){
         let merged={};
         Object.values(allComp).forEach(uc=>{ if(uc && typeof uc==='object') Object.assign(merged,uc); });
         completions=merged;
         renderTasks(); renderProgressBar(); renderDashboard();
-        if(_livePanel) {
-          _fbDb.ref('hm_events').once('value').then(es=>renderLivePanelFromEvents(es.val()||{})).catch(()=>{});
-        }
+        if(_livePanel){ _fbDb.ref('hm_events').once('value').then(es=>renderLivePanelFromEvents(es.val()||{})).catch(()=>{}); }
       }
     }, ()=>{});
 
-    // Listener events : met à jour le live panel en temps réel dès qu'un user coche
-    window._adminEventsRef = _fbDb.ref('hm_events');
-    window._adminEventsCb = window._adminEventsRef.on('value', s=>{
+    // Listener 2 : events — notifie l'admin même si Live Panel est fermé
+    window._adminEvtRef = _fbDb.ref('hm_events');
+    window._adminEvtCb  = window._adminEvtRef.on('value', s=>{
       const evts=s.val();
-      if(_livePanel && evts && typeof evts==='object'){
-        renderLivePanelFromEvents(evts);
-      }
-      // Toast discret si panel fermé
-      if(!_livePanel && evts && typeof evts==='object'){
+      if(!evts || typeof evts!=='object') return;
+      // Mise à jour Live Panel si ouvert
+      if(_livePanel) renderLivePanelFromEvents(evts);
+      // Toast discret si panel fermé : ne montrer que les événements < 5 secondes
+      if(!_livePanel){
         const today=new Date().toISOString().slice(0,10);
-        const recent=Object.values(evts).filter(e=>e && e.period===today)
+        const recent=Object.values(evts)
+          .filter(e=>e && e.period===today && e.isDone)
           .sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt))[0];
-        if(recent && recent.completedAt){
+        if(recent){
           const age=(Date.now()-new Date(recent.completedAt).getTime())/1000;
-          if(age<5){ // événement < 5 secondes → notification fraîche
-            showToast(`✅ ${recent.userName} : ${(recent.taskLabel||'').substring(0,30)}`, recent.couleur||'#27ae60');
-          }
+          if(age<6) showToast('✅ '+recent.userName+' : '+(recent.taskLabel||'').substring(0,32), recent.couleur||'#27ae60');
         }
       }
     }, ()=>{});
 
+  // ── User : chargement de ses propres completions ──
   } else if(_fbDb && _fbConnected){
-    // User : charger ses propres completions depuis Firebase (lecture unique suffit)
     _fbDb.ref('hm_data/completions/'+uid).once('value').then(s=>{
       const fbComp=s.val();
       if(fbComp && typeof fbComp==='object'){
@@ -1032,15 +1029,9 @@ function onLoginSuccess(){
 function doLogout(){
   currentUser=null;
   sessionStorage.removeItem('hm_session');
-  // Détacher les listeners Firebase admin
-  if(window._adminCompRef && window._adminCompCb){
-    window._adminCompRef.off('value', window._adminCompCb);
-    window._adminCompRef=null; window._adminCompCb=null;
-  }
-  if(window._adminEventsRef && window._adminEventsCb){
-    window._adminEventsRef.off('value', window._adminEventsCb);
-    window._adminEventsRef=null; window._adminEventsCb=null;
-  }
+  // Détacher les listeners Firebase admin pour éviter les fuites
+  if(window._adminCompRef){try{window._adminCompRef.off('value',window._adminCompCb);}catch(e){} window._adminCompRef=null;window._adminCompCb=null;}
+  if(window._adminEvtRef) {try{window._adminEvtRef.off('value',window._adminEvtCb);}catch(e){}  window._adminEvtRef=null; window._adminEvtCb=null;}
   document.getElementById('login-username').value='';
   document.getElementById('login-password').value='';
   showLoginScreen();
@@ -1460,6 +1451,11 @@ function toggleTask(tid,freq){
     if(completionLog.length>5000)completionLog=completionLog.slice(-5000);
   } else {completionLog=completionLog.filter(e=>!(e.roleId===currentRoleId&&e.taskId===tid&&e.period===periodKey(freq)&&e.userId===currentUser?.id));}
   saveData();
+  // ── Écriture immédiate Firebase pour que l'admin reçoive en temps réel ──
+  if(_fbDb && _fbConnected){
+    const uid2=currentUser?currentUser.id:'guest';
+    _fbDb.ref('hm_data/completions/'+uid2).set(completions).catch(()=>{});
+  }
   // ── Notification temps réel vers l'admin ──
   pushTaskEventToAdmin(tid, freq, isDone, task, r, now);
   renderTasks();renderRoleHeader();renderProgressBar();renderSidebar();
@@ -2383,23 +2379,13 @@ function openLivePanel(){
 function startLivePolling(){
   stopLivePolling();
   if(_fbDb&&_fbConnected){
-    // L'admin a déjà un listener global sur hm_events (depuis onLoginSuccess).
-    // On le réutilise ici pour le panel sans en créer un doublon.
-    if(window._adminEventsRef){
-      // Rattacher un callback dédié au panel
-      _fbLiveRef=window._adminEventsRef;
-      _fbUnsubscribe=_fbLiveRef.on('value', snap=>{
-        const evts=snap.val();
-        if(evts && typeof evts==='object') renderLivePanelFromEvents(evts);
-      }, ()=>{ startLocalPolling(); });
-    } else {
-      // Fallback si pas de listener global (ex: connexion Firebase tardive)
-      _fbLiveRef=_fbDb.ref('hm_events');
-      _fbUnsubscribe=_fbLiveRef.on('value', snap=>{
-        const evts=snap.val();
-        if(evts && typeof evts==='object') renderLivePanelFromEvents(evts);
-      }, ()=>{ startLocalPolling(); });
-    }
+    // Réutiliser le listener global admin si disponible (évite doublon Firebase)
+    const ref = window._adminEvtRef || _fbDb.ref('hm_events');
+    _fbLiveRef=ref;
+    _fbUnsubscribe=ref.on('value', snap=>{
+      const evts=snap.val();
+      if(evts && typeof evts==='object') renderLivePanelFromEvents(evts);
+    }, ()=>{ startLocalPolling(); });
   } else {
     startLocalPolling();
   }
