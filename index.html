@@ -995,6 +995,14 @@ function onLoginSuccess(){
         }
       }
     });
+    // ── Sync completionLog admin depuis Firebase ──
+    _fbDb.ref('hm_data/completionLog').on('value', s=>{
+      const fbLog=s.val();
+      if(isDirecteur() && Array.isArray(fbLog) && fbLog.length>0){
+        completionLog=fbLog;
+        localStorage.setItem('hm_log',JSON.stringify(completionLog));
+      }
+    });
   } else if(_fbDb && _fbConnected){
     // User : charger ses propres completions depuis Firebase
     _fbDb.ref('hm_data/completions/'+uid).once('value').then(s=>{
@@ -1134,7 +1142,7 @@ function getAllTasks(rid){
 }
 function getRoleStats(rid,freq="ALL"){
   const tasks=getAllTasks(rid).filter(t=>freq==="ALL"||t.freq===freq);
-  const done=tasks.filter(t=>completions[ck(rid,t.id,t.freq)]).length;
+  const done=tasks.filter(t=>isTaskDone(rid,t.id,t.freq)).length;
   return{done,total:tasks.length,pct:tasks.length?Math.round(done/tasks.length*100):0};
 }
 function getSecteurStats(secteur,freq="ALL"){
@@ -1156,6 +1164,15 @@ function ck(rid,tid,freq){
   // Clé isolée par utilisateur : chaque user a ses propres completions
   const uid = currentUser ? currentUser.id : 'guest';
   return `${uid}__${rid}__${tid}__${periodKey(freq)}`;
+}
+// Vérifie si une tâche est complétée : pour l'admin, cherche dans toutes les clés du merge
+function isTaskDone(rid, tid, freq){
+  if(isDirecteur()){
+    // Admin : chercher n'importe quel user qui a complété cette tâche
+    const suffix = '__'+rid+'__'+tid+'__'+periodKey(freq);
+    return Object.keys(completions).some(k => k.endsWith(suffix) && completions[k]);
+  }
+  return !!completions[ck(rid,tid,freq)];
 }
 function weekKeyForDate(s){const d=new Date(s+'T00:00:00'),j=new Date(d.getFullYear(),0,1),w=Math.ceil(((d-j)/864e5+j.getDay()+1)/7);return `${d.getFullYear()}-W${String(w).padStart(2,'0')}`;}
 function getWeekDates(s){const d=new Date(s+'T00:00:00'),day=d.getDay(),diff=day===0?-6:1-day,mon=new Date(d);mon.setDate(d.getDate()+diff);const r=[];for(let i=0;i<7;i++){const x=new Date(mon);x.setDate(mon.getDate()+i);r.push(x.toISOString().slice(0,10));}return r;}
@@ -1376,9 +1393,11 @@ function renderTasks(){
   const now=new Date();
   const hNow=now.getHours()*60+now.getMinutes();
   tl.innerHTML=tasks.map(t=>{
-    const done=!!completions[ck(currentRoleId,t.id,t.freq)];
+    const done=isTaskDone(currentRoleId,t.id,t.freq);
     const isCust=t.id.startsWith("c_");
-    const completionEntry=completionLog.find(e=>e.taskId===t.id&&e.roleId===currentRoleId&&e.period===periodKey(t.freq));
+    const completionEntry=isDirecteur()
+      ? completionLog.find(e=>e.taskId===t.id&&e.roleId===currentRoleId&&e.period===periodKey(t.freq))
+      : completionLog.find(e=>e.taskId===t.id&&e.roleId===currentRoleId&&e.period===periodKey(t.freq)&&e.userId===currentUser?.id);
     // Indicateur deadline pour admin
     let deadlineIndicator='';
     if(isAdmin && isCust && t.deadline){
@@ -1419,7 +1438,7 @@ function renderTasks(){
 function renderProgressBar(){
   const r=getRole(currentRoleId);
   const tasks=getAllTasks(currentRoleId).filter(t=>currentFreq==="ALL"||t.freq===currentFreq);
-  const done=tasks.filter(t=>completions[ck(currentRoleId,t.id,t.freq)]).length;
+  const done=tasks.filter(t=>isTaskDone(currentRoleId,t.id,t.freq)).length;
   const pct=tasks.length?Math.round(done/tasks.length*100):0;
   document.getElementById("pb-count").textContent=`${done}/${tasks.length} (${pct}%)`;
   document.getElementById("pb-count").style.color=r.color;
@@ -1904,7 +1923,7 @@ function buildReportHTML(forPrint=false){
   roles.forEach(r=>{
     let tasks=getAllTasks(r.id);if(freq)tasks=tasks.filter(t=>t.freq===freq);
     if(exportType==="C"&&customLogEntries!==null){tasks=tasks.map(t=>({...t,_done:!!customLogEntries.find(e=>e.roleId===r.id&&e.taskId===t.id)}));}
-    else{tasks=tasks.map(t=>({...t,_done:!!completions[ck(r.id,t.id,t.freq)]}));}
+    else{tasks=tasks.map(t=>({...t,_done:isTaskDone(r.id,t.id,t.freq)}));}
     const done=tasks.filter(t=>t._done).length;totalDone+=done;totalTasks+=tasks.length;
     const pct=tasks.length?Math.round(done/tasks.length*100):0,pctColor=pct>=80?"#1a7a40":pct>=50?"#b85c00":"#c0392b";
     const filteredTasks=tasks.filter(t=>(t._done&&showDone)||(!t._done&&showTodo));
@@ -2294,7 +2313,7 @@ function buildLiveSnapshot(){
     const done=tasks.filter(t=>completions[ck(r.id,t.id,t.freq)]).length;
     const pct=tasks.length?Math.round(done/tasks.length*100):0;
     snap.push({id:r.id,label:r.label,icon:r.icon,color:r.color,done,total:tasks.length,pct,secteur:r.secteur,
-      tasks:tasks.map(t=>({id:t.id,label:t.label,freq:t.freq,note:t.note||'',done:!!completions[ck(r.id,t.id,t.freq)]}))
+      tasks:tasks.map(t=>({id:t.id,label:t.label,freq:t.freq,note:t.note||'',done:isTaskDone(r.id,t.id,t.freq)}))
     });
   });
   return snap;
@@ -2414,12 +2433,15 @@ function renderLivePanelFromEvents(evts){
     }
   });
 
-  // Compter les completions depuis Firebase (depuis completions mergées)
+  // Compter les completions depuis Firebase (depuis completions mergées de tous les users)
   const roleStats={};
   ROLES.forEach(r=>{
-    const tasks=r.taches; // tâches de base uniquement pour le live panel
-    const doneCount=tasks.filter(t=>completions[currentUser?.id+'__'+r.id+'__'+t.id+'__'+todayStr]||
-      Object.keys(completions).some(k=>k.includes('__'+r.id+'__'+t.id+'__'+todayStr))).length;
+    const tasks=getAllTasks(r.id); // toutes les tâches (base + custom) pour ce rôle
+    // Chercher toute clé de la forme *__roleId__taskId__period (indépendamment du uid)
+    const doneCount=tasks.filter(t=>{
+      const suffix='__'+r.id+'__'+t.id+'__'+periodKey(t.freq);
+      return Object.keys(completions).some(k=>k.endsWith(suffix));
+    }).length;
     roleStats[r.id]={done:doneCount,total:tasks.length,pct:tasks.length?Math.round(doneCount/tasks.length*100):0};
   });
 
