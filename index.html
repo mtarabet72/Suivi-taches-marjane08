@@ -424,7 +424,7 @@ input,select,textarea{font-family:'DM Sans',sans-serif;font-size:14px;}
     <button class="hdr-tab" onclick="showView('tasks')">✅ Suivi Tâches</button>
     <button class="hdr-tab" onclick="showView('results')">📈 Résultats</button>
     <button class="hdr-tab" onclick="showView('export')">📄 Export PDF</button>
-    <button class="hdr-tab" onclick="showView('settings')">⚙️ Paramètres</button>
+    <button class="hdr-tab" id="tab-settings" onclick="showView('settings')" style="display:none;">⚙️ Paramètres</button>
   </div>
 </div>
 
@@ -1053,6 +1053,9 @@ function applyAccessControl(){
   document.getElementById('data-mgmt-card').style.display=isDir?'block':'none';
   const liveWrap=document.getElementById('hdr-live-btn-wrap');
   if(liveWrap)liveWrap.style.display=isDir?'flex':'none';
+  // Onglet Paramètres : uniquement pour le Directeur
+  const tabSettings=document.getElementById('tab-settings');
+  if(tabSettings)tabSettings.style.display=isDir?'':'none';
   // Set initial role for task view
   const accessible=getAccessibleRoles();
   if(accessible.length>0){
@@ -1086,6 +1089,8 @@ function togglePwVis(inputId,btn){
 // VIEWS
 // ══════════════════════════════════════════════════════════════
 function showView(v){
+  // Bloquer l'accès aux Paramètres pour les non-admins
+  if(v==='settings' && !isDirecteur()){showToast('Accès réservé au Directeur','#e74c3c');return;}
   currentView=v;
   document.querySelectorAll(".view").forEach(el=>el.classList.remove("active"));
   document.querySelectorAll(".hdr-tab").forEach(el=>el.classList.remove("active"));
