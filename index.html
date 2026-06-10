@@ -2184,6 +2184,8 @@ function initFirebase(cfg){
             });
             completions=merged;
             if(currentUser) { renderTasks(); renderProgressBar(); renderSidebar(); renderDashboard(); }
+            // Rafraîchir le live panel si ouvert
+            if(_livePanel) renderLivePanel(buildLiveSnapshot(), new Date().toISOString());
           } else if(currentUser){
             // User : recharger ses propres completions
             const uid=currentUser.id;
@@ -2227,10 +2229,9 @@ function broadcastUpdate(){
   // Firebase — stocker par userId pour isolation + admin voit tout
   if(_fbDb&&_fbConnected){
     _fbDb.ref('hm_live/users/'+uid).set(payload).catch(()=>{});
-    // Si admin, mettre aussi le snapshot global
-    if(isDirecteur()){
-      _fbDb.ref('hm_live/snapshot').set(payload).catch(()=>{});
-    }
+    // Tous les users (pas seulement l'admin) écrivent dans hm_live/snapshot
+    // pour que l'admin reçoive immédiatement via son listener
+    _fbDb.ref('hm_live/snapshot').set(payload).catch(()=>{});
   }
   // Fallback localStorage (même navigateur)
   try{localStorage.setItem('hm_live_update_'+uid,JSON.stringify(payload));}catch(e){}
@@ -2277,11 +2278,41 @@ function openLivePanel(){
 function startLivePolling(){
   stopLivePolling();
   if(_fbDb&&_fbConnected){
-    // Firebase Realtime listener — déclenché dès qu'un chef de rayon coche une tâche
-    _fbLiveRef=_fbDb.ref('hm_live/snapshot');
+    // Firebase Realtime listener — écouter TOUS les users en temps réel
+    // hm_live/users/* contient les snapshots de chaque user
+    _fbLiveRef=_fbDb.ref('hm_live/users');
     _fbUnsubscribe=_fbLiveRef.on('value',snap=>{
-      const d=snap.val();
-      if(d&&d.snapshot)renderLivePanel(d.snapshot,d.updatedAt,d.byUser);
+      const allUsers=snap.val();
+      if(!allUsers || typeof allUsers!=='object') return;
+      // Trouver le user le plus récemment mis à jour
+      let latest=null,latestTime=0;
+      Object.values(allUsers).forEach(u=>{
+        if(u&&u.updatedAt){
+          const t=new Date(u.updatedAt).getTime();
+          if(t>latestTime){latestTime=t;latest=u;}
+        }
+      });
+      // Reconstruire le snapshot global en mergant les completions de tous les users depuis Firebase
+      if(_fbDb&&_fbConnected){
+        _fbDb.ref('hm_data/completions').once('value').then(cs=>{
+          const allComp=cs.val();
+          if(allComp && typeof allComp==='object'){
+            let merged={};
+            Object.values(allComp).forEach(uc=>{ if(uc && typeof uc==='object') Object.assign(merged,uc); });
+            completions=merged;
+          }
+          // Reconstruire le snapshot avec les completions mergées
+          const globalSnapshot=buildLiveSnapshot();
+          const updatedAt=latest?latest.updatedAt:new Date().toISOString();
+          const byUser=latest?latest.byUser:'';
+          renderLivePanel(globalSnapshot,updatedAt,byUser);
+        }).catch(()=>{
+          // Fallback : utiliser le snapshot du user le plus récent
+          if(latest&&latest.snapshot) renderLivePanel(latest.snapshot,latest.updatedAt,latest.byUser);
+        });
+      } else if(latest&&latest.snapshot){
+        renderLivePanel(latest.snapshot,latest.updatedAt,latest.byUser);
+      }
     },err=>{
       // Si Firebase échoue, fallback localStorage
       startLocalPolling();
