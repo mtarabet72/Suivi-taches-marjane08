@@ -893,19 +893,22 @@ function loadData(){
   try{taskOverrides=JSON.parse(localStorage.getItem("hm_overrides")||"{}");}catch(e){}
   try{companyData=Object.assign({nom:"",logo:null,address:"",phone:"",email:"",web:"",directorName:"",directorTitle:"Directeur",directorPhone:"",directorEmail:"",orgName:"",orgRef:"",orgAddress:"",orgContact:"",orgPerson:""},JSON.parse(localStorage.getItem("hm_company")||"{}"));}catch(e){}
   try{usersData=JSON.parse(localStorage.getItem("hm_users")||"[]");}catch(e){usersData=[];}
-  // Toujours garantir le compte admin même si localStorage est bloqué
+  // Garantir le compte admin avec fallback 1234
   const existingAdmin = usersData.find(u=>u.username==='admin');
   if(!existingAdmin){
+    // Aucun admin trouvé — créer avec 1234
     const adminDef={id:'u_admin',name:'Directeur',username:'admin',passwordHash:hashStr('1234'),systemRole:'directeur',ownRoleId:null,evaluableRoleIds:ROLES.map(r=>r.id),active:true,createdAt:new Date().toISOString()};
     if(usersData.length===0){usersData=[adminDef];}else{usersData.unshift(adminDef);}
     try{saveUsers();}catch(e){}
   } else {
-    // Migration : si le hash stocké ne correspond pas au hash actuel de '1234', c'est un ancien sel — on recrée le compte admin proprement
-    if(existingAdmin.passwordHash !== hashStr('1234') && existingAdmin._pwChanged !== true){
+    // S'assurer que le compte admin est actif et a un rôle directeur
+    existingAdmin.active = true;
+    existingAdmin.systemRole = existingAdmin.systemRole || 'directeur';
+    existingAdmin.evaluableRoleIds = existingAdmin.evaluableRoleIds || ROLES.map(r=>r.id);
+    // Ne JAMAIS écraser le hash si l'admin a changé son mot de passe (_pwChanged=true)
+    // Ne réinitialiser à 1234 que si le hash est corrompu/absent
+    if(!existingAdmin.passwordHash){
       existingAdmin.passwordHash = hashStr('1234');
-      existingAdmin.active = true;
-      existingAdmin.systemRole = existingAdmin.systemRole || 'directeur';
-      existingAdmin.evaluableRoleIds = existingAdmin.evaluableRoleIds || ROLES.map(r=>r.id);
       try{saveUsers();}catch(e){}
     }
   }
@@ -2152,11 +2155,21 @@ function initFirebase(cfg){
         showFirebaseStatus('✅ Firebase connecté — Suivi live actif','#27ae60');
         showToast('🔥 Firebase connecté !','#27ae60');
         // ── Sync utilisateurs depuis Firebase ──
+        // Fusionner les users Firebase en préservant les mots de passe locaux modifiés
+        function mergeFirebaseUsers(fbUsers){
+          if(!fbUsers || !Array.isArray(fbUsers) || !fbUsers.length) return;
+          // Pour chaque user local avec _pwChanged=true, conserver son hash local
+          const localPwMap={};
+          usersData.forEach(u=>{ if(u._pwChanged && u.passwordHash) localPwMap[u.id]=u.passwordHash; });
+          usersData=fbUsers;
+          // Réappliquer les hash locaux protégés
+          usersData.forEach(u=>{ if(localPwMap[u.id]){ u.passwordHash=localPwMap[u.id]; u._pwChanged=true; } });
+          localStorage.setItem('hm_users',JSON.stringify(usersData));
+        }
         _fbDb.ref('hm_users').once('value').then(s=>{
           const fbUsers=s.val();
           if(fbUsers && Array.isArray(fbUsers) && fbUsers.length>0){
-            usersData=fbUsers;
-            localStorage.setItem('hm_users',JSON.stringify(usersData));
+            mergeFirebaseUsers(fbUsers);
             renderUsersList();
           } else if(usersData.length>0){
             _fbDb.ref('hm_users').set(usersData).catch(()=>{});
@@ -2167,8 +2180,7 @@ function initFirebase(cfg){
         _fbDb.ref('hm_users').on('value',s=>{
           const fbUsers=s.val();
           if(fbUsers && Array.isArray(fbUsers) && fbUsers.length>0){
-            usersData=fbUsers;
-            localStorage.setItem('hm_users',JSON.stringify(usersData));
+            mergeFirebaseUsers(fbUsers);
             _fbUsersLoaded=true;
             renderUsersList();
           }
@@ -2556,12 +2568,23 @@ function doLogin(){
     return;
   }
 
-  // Si Firebase est configuré mais users pas encore chargés → attendre
-  if(_fbDb && usersData.length <= 1 && !_fbUsersLoaded){
-    errEl.textContent = '⏳ Chargement des utilisateurs en cours...';
-    errEl.style.display = 'block';
+  var hash = hashStr(pw);
+
+  // ── Tentative 1 : login avec les données locales (toujours en premier) ──
+  var user = usersData.find(function(u){ return u.username === un && u.passwordHash === hash && u.active; });
+  if(user){
+    errEl.style.display = 'none';
+    currentUser = user;
+    sessionStorage.setItem('hm_session', JSON.stringify({userId: user.id, loginAt: new Date().toISOString()}));
+    onLoginSuccess();
+    return;
+  }
+
+  // ── Tentative 2 : si Firebase connecté, recharger les users depuis Firebase puis réessayer ──
+  if(_fbDb && _fbConnected && !_fbUsersLoaded){
+    errEl.textContent = '⏳ Vérification en cours...';
     errEl.style.color = '#f39c12';
-    // Attendre max 4 secondes que Firebase charge
+    errEl.style.display = 'block';
     _fbDb.ref('hm_users').once('value').then(function(s){
       var fbUsers = s.val();
       if(fbUsers && Array.isArray(fbUsers) && fbUsers.length > 0){
@@ -2570,28 +2593,33 @@ function doLogin(){
       }
       _fbUsersLoaded = true;
       errEl.style.display = 'none';
-      doLogin(); // relancer
+      // Réessayer avec les données Firebase
+      var user2 = usersData.find(function(u){ return u.username === un && u.passwordHash === hash && u.active; });
+      if(user2){
+        currentUser = user2;
+        sessionStorage.setItem('hm_session', JSON.stringify({userId: user2.id, loginAt: new Date().toISOString()}));
+        onLoginSuccess();
+      } else {
+        errEl.style.color = '';
+        errEl.textContent = 'Identifiant ou mot de passe incorrect.';
+        errEl.style.display = 'block';
+        document.getElementById('login-password').value = '';
+      }
     }).catch(function(){
       _fbUsersLoaded = true;
-      errEl.style.display = 'none';
-      doLogin();
+      errEl.style.color = '';
+      errEl.textContent = 'Identifiant ou mot de passe incorrect.';
+      errEl.style.display = 'block';
+      document.getElementById('login-password').value = '';
     });
     return;
   }
 
-  var hash = hashStr(pw);
-  var user = usersData.find(function(u){ return u.username === un && u.passwordHash === hash && u.active; });
-  if(!user){
-    errEl.style.color = '';
-    errEl.textContent = 'Identifiant ou mot de passe incorrect.';
-    errEl.style.display = 'block';
-    document.getElementById('login-password').value = '';
-    return;
-  }
-  errEl.style.display = 'none';
-  currentUser = user;
-  sessionStorage.setItem('hm_session', JSON.stringify({userId: user.id, loginAt: new Date().toISOString()}));
-  onLoginSuccess();
+  // ── Échec définitif ──
+  errEl.style.color = '';
+  errEl.textContent = 'Identifiant ou mot de passe incorrect.';
+  errEl.style.display = 'block';
+  document.getElementById('login-password').value = '';
 }
 
 // ── resetLoginData global ──
