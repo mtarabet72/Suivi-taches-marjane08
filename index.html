@@ -1414,11 +1414,15 @@ function toggleTask(tid,freq){
   if(!canEditRole(currentRoleId)){showToast("Accès non autorisé","#e74c3c");return;}
   const key=ck(currentRoleId,tid,freq);const isDone=!completions[key];completions[key]=isDone;
   const r=getRole(currentRoleId);const task=getAllTasks(currentRoleId).find(t=>t.id===tid);
+  const now=new Date();
   if(isDone&&task){
-    completionLog.push({roleId:currentRoleId,roleLabel:r.label,secteur:r.secteur,taskId:tid,taskLabel:task.label,freq,period:periodKey(freq),completedAt:new Date().toISOString(),evaluatedBy:currentUser?.id,userId:currentUser?.id});
+    completionLog.push({roleId:currentRoleId,roleLabel:r.label,secteur:r.secteur,taskId:tid,taskLabel:task.label,freq,period:periodKey(freq),completedAt:now.toISOString(),evaluatedBy:currentUser?.id,userId:currentUser?.id});
     if(completionLog.length>5000)completionLog=completionLog.slice(-5000);
   } else {completionLog=completionLog.filter(e=>!(e.roleId===currentRoleId&&e.taskId===tid&&e.period===periodKey(freq)&&e.userId===currentUser?.id));}
-  saveData();broadcastUpdate();renderTasks();renderRoleHeader();renderProgressBar();renderSidebar();
+  saveData();
+  // ── Notification temps réel vers l'admin ──
+  pushTaskEventToAdmin(tid, freq, isDone, task, r, now);
+  renderTasks();renderRoleHeader();renderProgressBar();renderSidebar();
 }
 function setFreq(f){currentFreq=f;renderControls();renderTasks();renderProgressBar();}
 function toggleAddForm(){
@@ -2184,8 +2188,12 @@ function initFirebase(cfg){
             });
             completions=merged;
             if(currentUser) { renderTasks(); renderProgressBar(); renderSidebar(); renderDashboard(); }
-            // Rafraîchir le live panel si l'admin l'a ouvert
-            if(_livePanel) renderLivePanel(buildLiveSnapshot(), new Date().toISOString());
+            // Rafraîchir live panel si ouvert
+            if(_livePanel){
+              _fbDb.ref('hm_events').once('value').then(es=>{
+                renderLivePanelFromEvents(es.val()||{});
+              }).catch(()=>{});
+            }
           } else if(currentUser){
             // User : recharger ses propres completions
             const uid=currentUser.id;
@@ -2222,26 +2230,54 @@ function initFirebaseOnStartup(){
 // ══════════════════════════════════════════════════════════════
 let _livePanel=null;
 
-function broadcastUpdate(){
+// ── Nouvelle architecture : push événement tâche vers admin ──
+function pushTaskEventToAdmin(tid, freq, isDone, task, role, now){
   const uid=currentUser?currentUser.id:'guest';
-  const userName=currentUser?.name||'?';
-  const updatedAt=new Date().toISOString();
-  if(_fbDb&&_fbConnected){
-    if(isDirecteur()){
-      // Admin : construit son snapshot global et l'écrit directement
-      const snapshot=buildLiveSnapshot();
-      _fbDb.ref('hm_live/snapshot').set({snapshot,updatedAt,byUser:userName,userId:uid}).catch(()=>{});
-    } else {
-      // User : écrit uniquement un trigger minimaliste
-      // L'admin écoute ce nœud et reconstruit le snapshot depuis ses completions mergées
-      _fbDb.ref('hm_live/trigger').set({updatedAt,byUser:userName,userId:uid}).catch(()=>{});
-    }
+  const heure=now.getHours()*60+now.getMinutes();
+  // Règle couleur : vert si fait avant 12h00, rouge si après ou non fait
+  const deadline=12*60; // 12h00
+  let statut, couleur;
+  if(isDone){
+    statut = heure < deadline ? 'VERT' : 'ROUGE';
+    couleur = heure < deadline ? '#27ae60' : '#e74c3c';
+  } else {
+    statut = 'ANNULE';
+    couleur = '#888';
   }
-  // Fallback localStorage (même navigateur)
+  const event={
+    uid, userName:currentUser?.name||'?',
+    roleId:role.id, roleLabel:role.label, roleIcon:role.icon, secteur:role.secteur,
+    taskId:tid, taskLabel:task?task.label:'?',
+    freq,
+    isDone,
+    statut, couleur,
+    heure:now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}),
+    completedAt:now.toISOString(),
+    period:periodKey(freq)
+  };
+  // Firebase : écrire dans hm_events/{uid}_{tid}_{period} — l'admin écoute ce nœud
+  if(_fbDb&&_fbConnected){
+    const eventKey=uid+'__'+role.id+'__'+tid+'__'+periodKey(freq);
+    _fbDb.ref('hm_events/'+eventKey).set(event).catch(()=>{});
+  }
+  // Fallback localStorage
   try{
-    const snapshot=buildLiveSnapshot();
-    localStorage.setItem('hm_live_update',JSON.stringify({snapshot,updatedAt,byUser:userName,userId:uid}));
+    const evts=JSON.parse(localStorage.getItem('hm_events_local')||'{}');
+    const eventKey=uid+'__'+role.id+'__'+tid+'__'+periodKey(freq);
+    if(isDone){evts[eventKey]=event;}else{delete evts[eventKey];}
+    localStorage.setItem('hm_events_local',JSON.stringify(evts));
+    localStorage.setItem('hm_events_tick',Date.now().toString());
   }catch(e){}
+}
+
+function broadcastUpdate(){
+  // Conservé pour compatibilité avec saveCustomTask / delCustom
+  const uid=currentUser?currentUser.id:'guest';
+  if(_fbDb&&_fbConnected&&isDirecteur()){
+    const snapshot=buildLiveSnapshot();
+    _fbDb.ref('hm_live/snapshot').set({snapshot,updatedAt:new Date().toISOString(),byUser:currentUser?.name||'?'}).catch(()=>{});
+  }
+  try{localStorage.setItem('hm_live_update',JSON.stringify({updatedAt:new Date().toISOString()}));}catch(e){}
 }
 
 function buildLiveSnapshot(){
@@ -2263,126 +2299,209 @@ function openLivePanel(){
   _livePanel=document.createElement("div");
   _livePanel.id="live-panel";
   const fbStatus=_fbConnected
-    ?'<span style="color:#27ae60;font-size:10px;">🔥 Firebase</span>'
+    ?'<span style="color:#27ae60;font-size:10px;">🔥 Firebase actif</span>'
     :'<span style="color:#f39c12;font-size:10px;">⚠️ Local uniquement</span>';
   _livePanel.innerHTML=`
     <div id="lp-header">
       <div>
         <div style="font-size:13px;font-weight:900;">📡 Suivi Live — Admin</div>
-        <div id="lp-last" style="font-size:10px;opacity:.7;">En attente de données... ${fbStatus}</div>
+        <div id="lp-last" style="font-size:10px;opacity:.7;">Chargement... ${fbStatus}</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;">
+        <div style="font-size:10px;color:rgba(255,255,255,.5);">🟢=avant 12h &nbsp;🔴=après 12h</div>
         <div id="lp-dot" style="width:10px;height:10px;border-radius:50%;background:${_fbConnected?'#27ae60':'#f39c12'};animation:lpPulse 1.5s infinite;"></div>
         <button onclick="openLivePanel()" style="background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;">✕ Fermer</button>
       </div>
     </div>
-    <div id="lp-body" style="overflow-y:auto;max-height:calc(80vh - 52px);padding:10px 12px;"></div>`;
+    <div id="lp-body" style="overflow-y:auto;max-height:calc(80vh - 60px);padding:10px 12px;"></div>`;
   document.body.appendChild(_livePanel);
-  renderLivePanel(buildLiveSnapshot());
+
+  // Charger d'abord les completions mergées pour avoir les stats correctes
+  if(_fbDb&&_fbConnected){
+    Promise.all([
+      _fbDb.ref('hm_data/completions').once('value'),
+      _fbDb.ref('hm_events').once('value')
+    ]).then(([cs,es])=>{
+      const allComp=cs.val();
+      if(allComp&&typeof allComp==='object'){
+        let merged={};
+        Object.values(allComp).forEach(uc=>{if(uc&&typeof uc==='object')Object.assign(merged,uc);});
+        completions=merged;
+      }
+      renderLivePanelFromEvents(es.val()||{});
+    }).catch(()=>{
+      const evts=JSON.parse(localStorage.getItem('hm_events_local')||'{}');
+      renderLivePanelFromEvents(evts);
+    });
+  } else {
+    const evts=JSON.parse(localStorage.getItem('hm_events_local')||'{}');
+    renderLivePanelFromEvents(evts);
+  }
   startLivePolling();
 }
 
 function startLivePolling(){
   stopLivePolling();
   if(_fbDb&&_fbConnected){
-    // Listener 1 : trigger émis par les users quand ils cochent une tâche
-    _fbLiveRef=_fbDb.ref('hm_live/trigger');
-    _fbUnsubscribe=_fbLiveRef.on('value',snap=>{
-      const d=snap.val();
-      if(!d) return;
-      // L'admin relit toutes les completions Firebase et reconstruit son snapshot global
-      _fbDb.ref('hm_data/completions').once('value').then(cs=>{
-        const allComp=cs.val();
-        if(allComp && typeof allComp==='object'){
-          let merged={};
-          Object.values(allComp).forEach(uc=>{ if(uc && typeof uc==='object') Object.assign(merged,uc); });
-          completions=merged;
-        }
-        const globalSnapshot=buildLiveSnapshot();
-        renderLivePanel(globalSnapshot, d.updatedAt, d.byUser);
-        // Rafraîchir aussi le dashboard
-        renderDashboard(); renderSidebar();
-      }).catch(()=>{
-        // Fallback si Firebase échoue sur la lecture
-        renderLivePanel(buildLiveSnapshot(), d.updatedAt, d.byUser);
-      });
-    },err=>{ startLocalPolling(); });
-
-    // Listener 2 : snapshot émis par l'admin lui-même (si plusieurs admins)
-    _fbDb.ref('hm_live/snapshot').on('value', snap=>{
-      const d=snap.val();
-      if(d && d.snapshot) renderLivePanel(d.snapshot, d.updatedAt, d.byUser);
-    });
-
+    // Écoute hm_events : chaque fois qu'un user coche/décoche une tâche
+    _fbLiveRef=_fbDb.ref('hm_events');
+    _fbUnsubscribe=_fbLiveRef.on('value', snap=>{
+      const evts=snap.val();
+      if(evts && typeof evts==='object'){
+        renderLivePanelFromEvents(evts);
+      }
+    }, err=>{ startLocalPolling(); });
   } else {
-    // Fallback : polling localStorage + BroadcastChannel
     startLocalPolling();
   }
 }
 
-let _livePollInterval=null,_liveChannel=null,_liveLastSnapshot='';
+let _livePollInterval=null,_liveChannel=null,_liveLastTick='';
 function startLocalPolling(){
   try{
     _liveChannel=new BroadcastChannel('hm_live');
-    _liveChannel.onmessage=e=>{if(e.data?.snapshot)renderLivePanel(e.data.snapshot,e.data.updatedAt,e.data.byUser);};
+    _liveChannel.onmessage=e=>{
+      if(e.data?.events) renderLivePanelFromEvents(e.data.events);
+    };
   }catch(ex){_liveChannel=null;}
   _livePollInterval=setInterval(()=>{
     try{
-      const raw=localStorage.getItem('hm_live_update');
-      if(!raw)return;
-      if(raw===_liveLastSnapshot)return;
-      _liveLastSnapshot=raw;
-      const d=JSON.parse(raw);
-      if(d.snapshot)renderLivePanel(d.snapshot,d.updatedAt,d.byUser);
+      const tick=localStorage.getItem('hm_events_tick')||'';
+      if(tick===_liveLastTick) return;
+      _liveLastTick=tick;
+      const evts=JSON.parse(localStorage.getItem('hm_events_local')||'{}');
+      renderLivePanelFromEvents(evts);
     }catch(e){}
-    if(isDirecteur()&&_livePanel)renderLivePanel(buildLiveSnapshot());
-  },3000);
+  },2000);
 }
 
 function stopLivePolling(){
   if(_livePollInterval){clearInterval(_livePollInterval);_livePollInterval=null;}
   if(_liveChannel){_liveChannel.close();_liveChannel=null;}
   if(_fbLiveRef&&_fbUnsubscribe){try{_fbLiveRef.off('value',_fbUnsubscribe);}catch(e){}}_fbLiveRef=null;_fbUnsubscribe=null;
-  // Détacher aussi le listener snapshot
-  if(_fbDb){try{_fbDb.ref('hm_live/snapshot').off('value');}catch(e){}}
 }
 
-function renderLivePanel(snap,updatedAt,byUser){
-  if(!_livePanel)return;
-  const now=updatedAt?new Date(updatedAt).toLocaleTimeString("fr-FR"):new Date().toLocaleTimeString("fr-FR");
+// ── Nouveau rendu : basé sur les événements tâches (hm_events) ──
+function renderLivePanelFromEvents(evts){
+  if(!_livePanel) return;
+  const body=document.getElementById("lp-body");
   const lastEl=document.getElementById("lp-last");
-  if(lastEl)lastEl.textContent=`Mis à jour ${now}`+(byUser?` par ${byUser}`:"");
-  const body=document.getElementById("lp-body");if(!body)return;
-  // group par secteur
-  const secteurs=[...new Set(snap.map(r=>r.secteur))];
+  if(!body) return;
+
+  // Trouver l'événement le plus récent pour l'horodatage
+  const allEvts=Object.values(evts||{});
+  const todayStr=new Date().toISOString().slice(0,10);
+  // Filtrer sur la période d'aujourd'hui uniquement (Q)
+  const todayEvts=allEvts.filter(e=>e && e.period===todayStr);
+  const latestEvt=todayEvts.sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt))[0];
+  if(latestEvt && lastEl){
+    lastEl.textContent=`Màj ${latestEvt.heure} — ${latestEvt.userName}`;
+  }
+
+  // Grouper par rôle
+  const byRole={};
+  ROLES.forEach(r=>{ byRole[r.id]={role:r, events:[]}; });
+  todayEvts.forEach(e=>{
+    if(e.isDone && byRole[e.roleId]){
+      byRole[e.roleId].events.push(e);
+    }
+  });
+
+  // Compter les completions depuis Firebase (depuis completions mergées)
+  const roleStats={};
+  ROLES.forEach(r=>{
+    const tasks=r.taches; // tâches de base uniquement pour le live panel
+    const doneCount=tasks.filter(t=>completions[currentUser?.id+'__'+r.id+'__'+t.id+'__'+todayStr]||
+      Object.keys(completions).some(k=>k.includes('__'+r.id+'__'+t.id+'__'+todayStr))).length;
+    roleStats[r.id]={done:doneCount,total:tasks.length,pct:tasks.length?Math.round(doneCount/tasks.length*100):0};
+  });
+
+  const secteurs=[...new Set(ROLES.map(r=>r.secteur))];
   let html="";
-  secteurs.forEach(s=>{
-    const roles=snap.filter(r=>r.secteur===s);
-    const sdone=roles.reduce((a,r)=>a+r.done,0),stotal=roles.reduce((a,r)=>a+r.total,0);
+
+  secteurs.forEach(secteur=>{
+    const roles=ROLES.filter(r=>r.secteur===secteur);
+    let sdone=0,stotal=0;
+    roles.forEach(r=>{sdone+=roleStats[r.id].done;stotal+=roleStats[r.id].total;});
     const spct=stotal?Math.round(sdone/stotal*100):0;
-    html+=`<div style="margin-bottom:14px;">
-      <div style="font-size:10px;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
-        ${s} <span style="font-size:11px;font-weight:900;color:${spct===100?'#27ae60':'#e63950'}">${spct}%</span>
+    const spctCol=spct===100?'#27ae60':spct>=50?'#f39c12':'#e74c3c';
+
+    html+=`<div style="margin-bottom:16px;">
+      <div style="font-size:10px;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+        <span>${secteur==='Commercial'?'🛍️':'⚙️'} ${secteur}</span>
+        <span style="font-size:12px;font-weight:900;color:${spctCol}">${spct}%</span>
       </div>`;
+
     roles.forEach(r=>{
-      const barW=r.pct+"%";
-      const col=r.pct===100?"#27ae60":r.pct>50?"#f39c12":"#e74c3c";
-      html+=`<div style="background:#f8f9fb;border-radius:8px;padding:8px 10px;margin-bottom:5px;border:1px solid #e8eaed;">
-        <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px;">
-          <span style="font-size:14px;">${r.icon}</span>
-          <span style="font-size:11px;font-weight:700;flex:1;">${r.label}</span>
-          <span style="font-size:12px;font-weight:900;color:${col};font-family:monospace;">${r.pct}%</span>
-          <span style="font-size:10px;color:#aaa;">${r.done}/${r.total}</span>
+      const st=roleStats[r.id];
+      const barCol=st.pct===100?'#27ae60':st.pct>=50?'#f39c12':'#e74c3c';
+      const rEvts=byRole[r.id].events;
+
+      // Tâches avec indicateurs colorés
+      const taskRows=r.taches.map(t=>{
+        const evt=todayEvts.find(e=>e.taskId===t.id&&e.roleId===r.id&&e.isDone);
+        let indicator='';
+        if(evt){
+          indicator=`<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:8px;background:${evt.couleur}18;color:${evt.couleur};margin-left:4px;">${evt.statut==='VERT'?'🟢':'🔴'} ${evt.heure}</span>`;
+        } else {
+          const now=new Date();const hNow=now.getHours()*60+now.getMinutes();
+          const isLate=hNow>=12*60;
+          indicator=`<span style="font-size:10px;color:${isLate?'#e74c3c':'#bbb'};margin-left:4px;">${isLate?'🔴':'○'}</span>`;
+        }
+        return `<div style="display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:1px solid #f0f2f5;">
+          <span style="font-size:11px;flex:1;color:${evt?'#555':'#999'};${evt?'text-decoration:line-through':''}">${t.label}</span>
+          ${indicator}
+        </div>`;
+      }).join('');
+
+      // Dernières actions par user
+      const userActions=rEvts.length>0?rEvts.slice(0,3).map(e=>
+        `<div style="font-size:10px;padding:2px 6px;border-radius:6px;background:${e.couleur}12;color:${e.couleur};margin-top:2px;display:flex;align-items:center;gap:4px;">
+          ${e.statut==='VERT'?'🟢':'🔴'} <strong>${e.userName}</strong> — ${e.taskLabel.substring(0,30)}${e.taskLabel.length>30?'…':''} <span style="opacity:.6;margin-left:auto;">${e.heure}</span>
+        </div>`).join(''):'';
+
+      html+=`<div style="background:#f8f9fb;border-radius:10px;padding:10px 12px;margin-bottom:6px;border:1.5px solid #e8eaed;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <span style="font-size:16px;">${r.icon}</span>
+          <span style="font-size:12px;font-weight:800;flex:1;">${r.label}</span>
+          <span style="font-size:13px;font-weight:900;color:${barCol};font-family:monospace;">${st.pct}%</span>
+          <span style="font-size:10px;color:#aaa;">${st.done}/${st.total}</span>
         </div>
-        <div style="background:#e0e4ea;border-radius:4px;height:5px;overflow:hidden;">
-          <div style="width:${barW};height:100%;background:${col};border-radius:4px;transition:width .4s;"></div>
+        <div style="background:#e0e4ea;border-radius:4px;height:5px;overflow:hidden;margin-bottom:8px;">
+          <div style="width:${st.pct}%;height:100%;background:${barCol};border-radius:4px;transition:width .5s;"></div>
         </div>
-        ${r.tasks.filter(t=>!t.done).length>0?`<div style="margin-top:5px;">${r.tasks.filter(t=>!t.done).slice(0,3).map(t=>`<div style="font-size:10px;color:#aaa;padding:1px 0;">○ ${t.label}</div>`).join("")}${r.tasks.filter(t=>!t.done).length>3?`<div style="font-size:9px;color:#ccc;">+${r.tasks.filter(t=>!t.done).length-3} autres</div>`:""}</div>`:"<div style='font-size:10px;color:#27ae60;margin-top:4px;'>✅ Toutes les tâches faites</div>"}
+        <div style="margin-bottom:${userActions?'6px':'0'}">${taskRows}</div>
+        ${userActions?`<div style="font-size:10px;font-weight:800;color:#aaa;text-transform:uppercase;letter-spacing:1px;margin-top:6px;margin-bottom:3px;">Dernières actions</div>${userActions}`:''}
       </div>`;
     });
     html+="</div>";
   });
+
+  if(!html) html=`<div style="text-align:center;padding:30px;color:#aaa;font-size:12px;">En attente d'activité...</div>`;
   body.innerHTML=html;
+}
+
+// Garder renderLivePanel pour compatibilité (openLivePanel l'appelle au démarrage)
+function renderLivePanel(snap,updatedAt,byUser){
+  if(!_livePanel)return;
+  const lastEl=document.getElementById("lp-last");
+  if(lastEl&&updatedAt){
+    const now=new Date(updatedAt).toLocaleTimeString("fr-FR");
+    lastEl.textContent=`Màj ${now}`+(byUser?` — ${byUser}`:"");
+  }
+  // Lire les événements depuis Firebase ou localStorage et afficher
+  if(_fbDb&&_fbConnected){
+    _fbDb.ref('hm_events').once('value').then(s=>{
+      const evts=s.val()||{};
+      renderLivePanelFromEvents(evts);
+    }).catch(()=>{
+      const evts=JSON.parse(localStorage.getItem('hm_events_local')||'{}');
+      renderLivePanelFromEvents(evts);
+    });
+  } else {
+    const evts=JSON.parse(localStorage.getItem('hm_events_local')||'{}');
+    renderLivePanelFromEvents(evts);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
