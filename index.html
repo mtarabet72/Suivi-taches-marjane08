@@ -462,12 +462,11 @@ input,select,textarea{font-family:'DM Sans',sans-serif;font-size:14px;}
       <span id="eval-banner-text">Mode Évaluation</span>
     </div>
     <div id="role-header"></div>
-    <div class="view-mode-toggle">
+    <div class="view-mode-toggle" id="view-mode-toggle-wrap">
       <span style="font-size:11px;font-weight:700;color:var(--muted);">Vue :</span>
       <button class="freq-btn" id="view-mode-role" onclick="setViewMode('role')" style="background:var(--accent);color:#fff;border-color:var(--accent);">👤 Par Fonction</button>
-      <button class="freq-btn" id="view-mode-rayon" onclick="setViewMode('rayon')" style="background:#fff;color:#555;border-color:#ccc;">📦 Par Rayon</button>
     </div>
-    <div id="rayon-selector">
+    <div id="rayon-selector" style="display:none;">
       <select id="selectRayon" onchange="changerRayon()"><option value="">-- Choisir un rayon --</option></select>
     </div>
     <div id="controls">
@@ -966,19 +965,17 @@ function onLoginSuccess(){
     if(stored){completions=JSON.parse(stored);}
     else{completions={};}
   }catch(e){completions={};}
-  // Si admin : écouter toutes les completions Firebase en temps réel
+  // Si admin : fusionner toutes les completions Firebase
   if(_fbDb && _fbConnected && isDirecteur()){
-    _fbDb.ref('hm_data/completions').on('value', s=>{
+    _fbDb.ref('hm_data/completions').once('value').then(s=>{
       const allComp=s.val();
       if(allComp && typeof allComp==='object'){
         let merged={};
         Object.values(allComp).forEach(uc=>{ if(uc)Object.assign(merged,uc); });
         completions=merged;
         renderTasks(); renderProgressBar(); renderDashboard();
-        // Notifier l'admin visuellement si le live panel est ouvert
-        if(_livePanel) renderLivePanel(buildLiveSnapshot());
       }
-    });
+    }).catch(()=>{});
   } else if(_fbDb && _fbConnected){
     // User : charger ses propres completions depuis Firebase
     _fbDb.ref('hm_data/completions/'+uid).once('value').then(s=>{
@@ -1109,7 +1106,9 @@ function getAllTasks(rid){
       return t.jours.includes(todayName);
     }
     if(t.freq==='M'){
+      // Admin et users assignés voient toujours leurs tâches mensuelles
       if(isAdmin)return true;
+      if(t.assignedTo===uid)return true; // user assigné : toujours visible
       if(!t.datesMois||!Array.isArray(t.datesMois)||t.datesMois.length===0)return true;
       return t.datesMois.map(d=>parseInt(d,10)).filter(d=>!isNaN(d)).includes(todayDate);
     }
@@ -1165,9 +1164,9 @@ function renderDashboard(){
         currentUser.ownRoleId === r.id
       );
 
-  // ── Masquer "Par Rayon" pour non-admin ──
+  // ── Masquer le toggle rayon (supprimé de l'interface) ──
   const btnRayon = document.getElementById('view-mode-rayon');
-  if(btnRayon) btnRayon.style.display = isAdmin ? '' : 'none';
+  if(btnRayon) btnRayon.style.display = 'none';
 
   // ── Stats sur les rôles visibles ──
   function statsFor(roles, freq){
@@ -1228,17 +1227,18 @@ function renderDashboard(){
   // ── Dashboard admin (inchangé) ──
   const g = statsFor(visibleRoles, dashPeriod);
   const gc = statsFor(visibleRoles.filter(r=>r.secteur==='Commercial'), dashPeriod);
-  const gs = statsFor(visibleRoles.filter(r=>r.secteur==='Services'), dashPeriod);
   const pl=dashPeriod==="Q"?`📅 ${fmtDate(new Date())}`:dashPeriod==="H"?`📅 Semaine ${weekKey()}`:`📅 ${monthKey()}`;
   document.getElementById("dash-period-label").textContent=pl;
-  const rd=visibleRoles.filter(r=>getRoleStats(r.id,dashPeriod).pct===100).length;
+  const commercialRoles=visibleRoles.filter(r=>r.secteur==='Commercial');
+  const rd=commercialRoles.filter(r=>getRoleStats(r.id,dashPeriod).pct===100).length;
   document.getElementById("dash-summary").innerHTML=`
     <div class="sum-card" style="border-top-color:#e63950"><div class="sc-val" style="color:#e63950">${g.pct}%</div><div class="sc-label">Taux global</div><div class="sc-sub" style="color:#e63950">${g.done}/${g.total}</div></div>
     <div class="sum-card" style="border-top-color:#1a6b3c"><div class="sc-val" style="color:#1a6b3c">${gc.pct}%</div><div class="sc-label">Commercial</div><div class="sc-sub" style="color:#1a6b3c">${gc.done}/${gc.total}</div></div>
-    <div class="sum-card" style="border-top-color:#2980b9"><div class="sc-val" style="color:#2980b9">${gs.pct}%</div><div class="sc-label">Services</div><div class="sc-sub" style="color:#2980b9">${gs.done}/${gs.total}</div></div>
-    <div class="sum-card" style="border-top-color:#27ae60"><div class="sc-val" style="color:#27ae60">${rd}</div><div class="sc-label">Fonctions à 100%</div><div class="sc-sub" style="color:#27ae60">sur ${visibleRoles.length}</div></div>`;
+    <div class="sum-card" style="border-top-color:#27ae60"><div class="sc-val" style="color:#27ae60">${rd}</div><div class="sc-label">Fonctions à 100%</div><div class="sc-sub" style="color:#27ae60">sur ${commercialRoles.length}</div></div>`;
   let html="";
   ["Commercial","Services"].forEach(secteur=>{
+    // En session admin, masquer le secteur Services (aucune tâche définie)
+    if(secteur==="Services" && isAdmin) return;
     const roles=visibleRoles.filter(r=>r.secteur===secteur);
     if(roles.length===0)return;
     const sg=getSecteurStats(secteur,dashPeriod);const icon=secteur==="Commercial"?"🛍️":"⚙️";
@@ -1283,6 +1283,8 @@ function renderSidebar(){
   }
 
   ["Commercial","Services"].forEach(secteur=>{
+    // En session admin, masquer la section Services dans le sidebar (aucune tâche à cocher)
+    if(secteur==="Services" && isDirecteur()) return;
     const sRoles=accessible.filter(r=>r.secteur===secteur);
     if(!sRoles.length)return;
     const sec=document.createElement("div");
