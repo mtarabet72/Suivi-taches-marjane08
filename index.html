@@ -920,6 +920,7 @@ function saveData(){
   // ── Sync Firebase ──
   if(_fbDb && _fbConnected){
     _fbDb.ref('hm_data/customTasks').set(customTasks).catch(()=>{});
+    // Écrire les completions sous la clé userId pour isolation + merge admin
     _fbDb.ref('hm_data/completions/'+uid).set(completions).catch(()=>{});
     _fbDb.ref('hm_data/completionLog').set(completionLog).catch(()=>{});
     _fbDb.ref('hm_data/taskOverrides').set(taskOverrides).catch(()=>{});
@@ -966,8 +967,9 @@ function onLoginSuccess(){
     if(stored){completions=JSON.parse(stored);}
     else{completions={};}
   }catch(e){completions={};}
-  // Si admin : fusionner toutes les completions Firebase
+  // Si admin : fusionner toutes les completions Firebase + écoute temps réel
   if(_fbDb && _fbConnected && isDirecteur()){
+    // Chargement initial
     _fbDb.ref('hm_data/completions').once('value').then(s=>{
       const allComp=s.val();
       if(allComp && typeof allComp==='object'){
@@ -977,6 +979,22 @@ function onLoginSuccess(){
         renderTasks(); renderProgressBar(); renderDashboard();
       }
     }).catch(()=>{});
+    // ── Écoute temps réel des completions de tous les users (post-login) ──
+    _fbDb.ref('hm_data/completions').on('value', s=>{
+      const allComp=s.val();
+      if(!allComp || typeof allComp!=='object') return;
+      if(isDirecteur()){
+        let merged={};
+        Object.values(allComp).forEach(uc=>{ if(uc && typeof uc==='object') Object.assign(merged,uc); });
+        completions=merged;
+        if(currentUser){ renderTasks(); renderProgressBar(); renderSidebar(); renderDashboard(); }
+        if(_livePanel){
+          _fbDb.ref('hm_events').once('value').then(es=>{
+            renderLivePanelFromEvents(es.val()||{});
+          }).catch(()=>{});
+        }
+      }
+    });
   } else if(_fbDb && _fbConnected){
     // User : charger ses propres completions depuis Firebase
     _fbDb.ref('hm_data/completions/'+uid).once('value').then(s=>{
@@ -2176,26 +2194,15 @@ function initFirebase(cfg){
             localStorage.setItem('hm_overrides',JSON.stringify(taskOverrides));
           }
         });
-        // ── Écoute completions de TOUS les users (pour l'admin) ──
+        // ── Écoute completions : uniquement pour les users non-admin
+        //    L'admin a son propre listener attaché dans onLoginSuccess() ──
         _fbDb.ref('hm_data/completions').on('value',s=>{
           const allComp=s.val();
           if(!allComp || typeof allComp!=='object') return;
-          if(isDirecteur()){
-            // Admin : fusionner toutes les completions de tous les users
-            let merged={};
-            Object.values(allComp).forEach(userComp=>{
-              if(userComp && typeof userComp==='object') Object.assign(merged,userComp);
-            });
-            completions=merged;
-            if(currentUser) { renderTasks(); renderProgressBar(); renderSidebar(); renderDashboard(); }
-            // Rafraîchir live panel si ouvert
-            if(_livePanel){
-              _fbDb.ref('hm_events').once('value').then(es=>{
-                renderLivePanelFromEvents(es.val()||{});
-              }).catch(()=>{});
-            }
-          } else if(currentUser){
-            // User : recharger ses propres completions
+          // Si l'admin est déjà connecté, son listener dans onLoginSuccess gère tout
+          if(isDirecteur()) return;
+          // User : recharger ses propres completions
+          if(currentUser){
             const uid=currentUser.id;
             if(allComp[uid]){
               completions=allComp[uid];
