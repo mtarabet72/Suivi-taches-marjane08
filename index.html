@@ -960,14 +960,22 @@ function showLoginScreen(){
 // doLogin() déplacé plus haut avec les listeners
 function onLoginSuccess(){
   const uid=currentUser?currentUser.id:'guest';
-  // Charger completions depuis localStorage d'abord
+  // Charger completions depuis localStorage en premier
   try{
     const stored=localStorage.getItem('hm_comp_'+uid);
-    if(stored){completions=JSON.parse(stored);}
-    else{completions={};}
+    completions=stored?JSON.parse(stored):{};
   }catch(e){completions={};}
-  // Les listeners Firebase (completions + events) sont gérés dans initFirebase > .info/connected
-  // Ils s'activent automatiquement dès que Firebase est connecté, qu'importe le timing du login.
+
+  // ── Charger _eventsCache si admin déjà connecté à Firebase ──
+  if(_fbDb && _fbConnected && isDirecteur()){
+    _fbDb.ref('hm_events').once('value').then(s=>{
+      if(s.val() && typeof s.val()==='object') _eventsCache=s.val();
+      renderDashboard();
+    }).catch(()=>{});
+  }
+  // Les listeners temps réel (completions + events) sont dans initFirebase > .info/connected
+  // Ils s'activent automatiquement dès que Firebase est prêt, quel que soit le timing du login.
+
   document.getElementById('login-overlay').classList.add('hidden');
   updateHeaderUser();
   applyAccessControl();
@@ -981,8 +989,9 @@ function onLoginSuccess(){
 function doLogout(){
   currentUser=null;
   sessionStorage.removeItem('hm_session');
-  // Les listeners Firebase (completions/events) restent actifs après logout
-  // pour se déclencher dès que l'admin se reconnecte — c'est intentionnel.
+  // Détacher les listeners Firebase admin pour éviter les fuites
+  if(window._adminCompRef){try{window._adminCompRef.off('value',window._adminCompCb);}catch(e){} window._adminCompRef=null;window._adminCompCb=null;}
+  if(window._adminEvtRef) {try{window._adminEvtRef.off('value',window._adminEvtCb);}catch(e){}  window._adminEvtRef=null; window._adminEvtCb=null;}
   document.getElementById('login-username').value='';
   document.getElementById('login-password').value='';
   showLoginScreen();
@@ -1232,9 +1241,27 @@ function renderDashboard(){
         <div class="rc-bar-wrap"><div class="rc-bar" style="width:${pct}%;background:${r.color}"></div></div>
         <div class="rc-count">${s.done}/${s.total} · ${r.sous}</div>
         <div class="rc-tasks-preview"><div style="font-size:10px;font-weight:700;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:1px;">Tâches</div>
-        ${tasks.map(t=>{const done=completions[ck(r.id,t.id,t.freq)];return `<div class="rct-item"><div class="rct-dot" style="background:${done?r.color:"#e0e4ea"}"></div><span style="color:${done?"#555":"var(--text)"};text-decoration:${done?"line-through":""};flex:1">${t.label}</span><span style="color:${FC[t.freq]};font-size:9px;font-weight:700">${FL[t.freq][0]}</span></div>`;}).join("")}
-        </div></div>`;}).join("")}
-    </div></div>`;
+        ${tasks.map(t=>{
+            const done=completions[ck(r.id,t.id,t.freq)];
+            // Chercher l'événement de validation dans le cache
+            const today=new Date().toISOString().slice(0,10);
+            const evtKey=Object.keys(_eventsCache||{}).find(k=>{
+              const e=_eventsCache[k];
+              return e && e.roleId===r.id && e.taskId===t.id && e.period===today && e.isDone;
+            });
+            const evt=evtKey?_eventsCache[evtKey]:null;
+            const indicator=evt
+              ? \`<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:8px;background:\${evt.couleur}18;color:\${evt.couleur};white-space:nowrap;">\${evt.statut==='VERT'?'🟢':'🔴'} \${evt.heure} · \${evt.userName||'?'}</span>\`
+              : (done ? \`<span style="font-size:10px;color:#27ae60;font-weight:700;">✓</span>\` : '');
+            return \`<div class="rct-item" style="align-items:center;">
+              <div class="rct-dot" style="background:\${done?r.color:'#e0e4ea'};flex-shrink:0;"></div>
+              <span style="color:\${done?'#555':'var(--text)'};text-decoration:\${done?'line-through':''};flex:1;">\${t.label}</span>
+              <span style="color:\${FC[t.freq]};font-size:9px;font-weight:700;margin:0 4px;">\${FL[t.freq][0]}</span>
+              \${indicator}
+            </div>\`;
+          }).join("")}
+        </div></div>\`;}).join("")}
+    </div></div>\`;
   });
   document.getElementById("dash-secteurs").innerHTML=html;
 }
@@ -2172,7 +2199,7 @@ function initFirebase(cfg){
             Object.values(allComp).forEach(uc=>{ if(uc && typeof uc==='object') Object.assign(merged,uc); });
             completions=merged;
             if(currentUser){ renderTasks(); renderProgressBar(); renderSidebar(); renderDashboard(); }
-            if(_livePanel){ _fbDb.ref('hm_events').once('value').then(es=>renderLivePanelFromEvents(es.val()||{})).catch(()=>{}); }
+            if(_livePanel){ renderLivePanelFromEvents(_eventsCache); }
           } else if(currentUser){
             const uid=currentUser.id;
             if(allComp[uid]){
@@ -2182,19 +2209,24 @@ function initFirebase(cfg){
             }
           }
         });
-        // ── Écoute hm_events : toast admin + live panel (ACTIF DÈS LA CONNEXION FIREBASE) ──
+        // ── Écoute hm_events : cache global + dashboard admin + live panel ──
         _fbDb.ref('hm_events').on('value',s=>{
           const evts=s.val();
-          if(!evts || typeof evts!=='object' || !isDirecteur()) return;
-          if(_livePanel){ renderLivePanelFromEvents(evts); return; }
-          // Toast discret si panel fermé - uniquement événements frais (< 7 sec)
-          const today=new Date().toISOString().slice(0,10);
-          const recent=Object.values(evts)
-            .filter(e=>e && e.period===today && e.isDone)
-            .sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt))[0];
-          if(recent){
-            const age=(Date.now()-new Date(recent.completedAt).getTime())/1000;
-            if(age<7) showToast('\u2705 '+(recent.userName||'?')+' : '+(recent.taskLabel||'').substring(0,35), recent.couleur||'#27ae60');
+          if(!evts || typeof evts!=='object') return;
+          _eventsCache=evts; // toujours à jour pour renderDashboard
+          if(!isDirecteur()) return;
+          if(_livePanel){ renderLivePanelFromEvents(evts); }
+          if(currentUser){ renderDashboard(); } // rafraîchit les indicateurs verts/rouges
+          // Toast discret si panel fermé - uniquement événements frais (< 8 sec)
+          if(!_livePanel){
+            const today=new Date().toISOString().slice(0,10);
+            const recent=Object.values(evts)
+              .filter(e=>e && e.period===today && e.isDone)
+              .sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt))[0];
+            if(recent){
+              const age=(Date.now()-new Date(recent.completedAt).getTime())/1000;
+              if(age<8) showToast('\u2705 '+(recent.userName||'?')+' : '+(recent.taskLabel||'').substring(0,35), recent.couleur||'#27ae60');
+            }
           }
         });
       } else {
@@ -2222,6 +2254,7 @@ function initFirebaseOnStartup(){
 // LIVE ADMIN — SUIVI EN TEMPS RÉEL (Firebase Realtime DB)
 // ══════════════════════════════════════════════════════════════
 let _livePanel=null;
+let _eventsCache={}; // cache global des événements hm_events pour le dashboard admin
 
 // ── Nouvelle architecture : push événement tâche vers admin ──
 function pushTaskEventToAdmin(tid, freq, isDone, task, role, now){
