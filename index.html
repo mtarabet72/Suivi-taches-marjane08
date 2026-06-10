@@ -893,7 +893,7 @@ function loadData(){
   try{taskOverrides=JSON.parse(localStorage.getItem("hm_overrides")||"{}");}catch(e){}
   try{companyData=Object.assign({nom:"",logo:null,address:"",phone:"",email:"",web:"",directorName:"",directorTitle:"Directeur",directorPhone:"",directorEmail:"",orgName:"",orgRef:"",orgAddress:"",orgContact:"",orgPerson:""},JSON.parse(localStorage.getItem("hm_company")||"{}"));}catch(e){}
   try{usersData=JSON.parse(localStorage.getItem("hm_users")||"[]");}catch(e){usersData=[];}
-  // Garantir le compte admin — toujours hash('1234') sauf si mot de passe changé volontairement
+  // Garantir le compte admin — créer si absent, sinon préserver le hash existant
   const existingAdmin = usersData.find(u=>u.username==='admin');
   if(!existingAdmin){
     const adminDef={id:'u_admin',name:'Directeur',username:'admin',passwordHash:hashStr('1234'),systemRole:'directeur',ownRoleId:null,evaluableRoleIds:ROLES.map(r=>r.id),active:true,createdAt:new Date().toISOString()};
@@ -903,10 +903,9 @@ function loadData(){
     existingAdmin.active = true;
     existingAdmin.systemRole = existingAdmin.systemRole || 'directeur';
     existingAdmin.evaluableRoleIds = existingAdmin.evaluableRoleIds || ROLES.map(r=>r.id);
-    // Réinitialiser à 1234 seulement si hash absent/corrompu ET mot de passe pas changé manuellement
-    if(!existingAdmin.passwordHash || (!existingAdmin._pwChanged && existingAdmin.passwordHash !== hashStr('1234'))){
+    // Ne réinitialiser le hash QUE si complètement absent — ne jamais écraser un hash valide existant
+    if(!existingAdmin.passwordHash){
       existingAdmin.passwordHash = hashStr('1234');
-      delete existingAdmin._pwChanged;
       try{saveUsers();}catch(e){}
     }
   }
@@ -2153,15 +2152,15 @@ function initFirebase(cfg){
         showFirebaseStatus('✅ Firebase connecté — Suivi live actif','#27ae60');
         showToast('🔥 Firebase connecté !','#27ae60');
         // ── Sync utilisateurs depuis Firebase ──
-        // Fusionner les users Firebase en préservant les mots de passe locaux modifiés
+        // Fusionner les users Firebase en préservant TOUS les mots de passe locaux existants
         function mergeFirebaseUsers(fbUsers){
           if(!fbUsers || !Array.isArray(fbUsers) || !fbUsers.length) return;
-          // Pour chaque user local avec _pwChanged=true, conserver son hash local
+          // Conserver tous les hash locaux (pas seulement _pwChanged) — ils sont toujours plus fiables
           const localPwMap={};
-          usersData.forEach(u=>{ if(u._pwChanged && u.passwordHash) localPwMap[u.id]=u.passwordHash; });
+          usersData.forEach(u=>{ if(u.passwordHash) localPwMap[u.id]=u.passwordHash; });
           usersData=fbUsers;
-          // Réappliquer les hash locaux protégés
-          usersData.forEach(u=>{ if(localPwMap[u.id]){ u.passwordHash=localPwMap[u.id]; u._pwChanged=true; } });
+          // Réappliquer les hash locaux pour chaque user qui en avait un
+          usersData.forEach(u=>{ if(localPwMap[u.id]){ u.passwordHash=localPwMap[u.id]; } });
           localStorage.setItem('hm_users',JSON.stringify(usersData));
         }
         _fbDb.ref('hm_users').once('value').then(s=>{
@@ -2612,11 +2611,11 @@ function doLogin(){
       clearTimeout(timer);
       var fbUsers = s.val();
       if(fbUsers && Array.isArray(fbUsers) && fbUsers.length > 0){
-        // Préserver les hash locaux modifiés
+        // Préserver TOUS les hash locaux (ils sont plus fiables que Firebase)
         var localPwMap = {};
-        usersData.forEach(function(u){ if(u._pwChanged && u.passwordHash) localPwMap[u.id] = u.passwordHash; });
+        usersData.forEach(function(u){ if(u.passwordHash) localPwMap[u.id] = u.passwordHash; });
         usersData = fbUsers;
-        usersData.forEach(function(u){ if(localPwMap[u.id]){ u.passwordHash = localPwMap[u.id]; u._pwChanged = true; } });
+        usersData.forEach(function(u){ if(localPwMap[u.id]){ u.passwordHash = localPwMap[u.id]; } });
         localStorage.setItem('hm_users', JSON.stringify(usersData));
         _fbUsersLoaded = true;
       }
