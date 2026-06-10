@@ -893,22 +893,20 @@ function loadData(){
   try{taskOverrides=JSON.parse(localStorage.getItem("hm_overrides")||"{}");}catch(e){}
   try{companyData=Object.assign({nom:"",logo:null,address:"",phone:"",email:"",web:"",directorName:"",directorTitle:"Directeur",directorPhone:"",directorEmail:"",orgName:"",orgRef:"",orgAddress:"",orgContact:"",orgPerson:""},JSON.parse(localStorage.getItem("hm_company")||"{}"));}catch(e){}
   try{usersData=JSON.parse(localStorage.getItem("hm_users")||"[]");}catch(e){usersData=[];}
-  // Garantir le compte admin avec fallback 1234
+  // Garantir le compte admin — toujours hash('1234') sauf si mot de passe changé volontairement
   const existingAdmin = usersData.find(u=>u.username==='admin');
   if(!existingAdmin){
-    // Aucun admin trouvé — créer avec 1234
     const adminDef={id:'u_admin',name:'Directeur',username:'admin',passwordHash:hashStr('1234'),systemRole:'directeur',ownRoleId:null,evaluableRoleIds:ROLES.map(r=>r.id),active:true,createdAt:new Date().toISOString()};
     if(usersData.length===0){usersData=[adminDef];}else{usersData.unshift(adminDef);}
     try{saveUsers();}catch(e){}
   } else {
-    // S'assurer que le compte admin est actif et a un rôle directeur
     existingAdmin.active = true;
     existingAdmin.systemRole = existingAdmin.systemRole || 'directeur';
     existingAdmin.evaluableRoleIds = existingAdmin.evaluableRoleIds || ROLES.map(r=>r.id);
-    // Ne JAMAIS écraser le hash si l'admin a changé son mot de passe (_pwChanged=true)
-    // Ne réinitialiser à 1234 que si le hash est corrompu/absent
-    if(!existingAdmin.passwordHash){
+    // Réinitialiser à 1234 seulement si hash absent/corrompu ET mot de passe pas changé manuellement
+    if(!existingAdmin.passwordHash || (!existingAdmin._pwChanged && existingAdmin.passwordHash !== hashStr('1234'))){
       existingAdmin.passwordHash = hashStr('1234');
+      delete existingAdmin._pwChanged;
       try{saveUsers();}catch(e){}
     }
   }
@@ -2570,56 +2568,72 @@ function doLogin(){
 
   var hash = hashStr(pw);
 
-  // ── Tentative 1 : login avec les données locales (toujours en premier) ──
-  var user = usersData.find(function(u){ return u.username === un && u.passwordHash === hash && u.active; });
-  if(user){
+  function tryLogin(users){
+    return users.find(function(u){
+      return u.username === un && u.passwordHash === hash && u.active;
+    });
+  }
+
+  function loginSuccess(user){
     errEl.style.display = 'none';
     currentUser = user;
     sessionStorage.setItem('hm_session', JSON.stringify({userId: user.id, loginAt: new Date().toISOString()}));
     onLoginSuccess();
-    return;
   }
 
-  // ── Tentative 2 : si Firebase connecté, recharger les users depuis Firebase puis réessayer ──
-  if(_fbDb && _fbConnected && !_fbUsersLoaded){
-    errEl.textContent = '⏳ Vérification en cours...';
+  function loginFail(){
+    errEl.style.color = '';
+    errEl.textContent = 'Identifiant ou mot de passe incorrect.';
+    errEl.style.display = 'block';
+    document.getElementById('login-password').value = '';
+  }
+
+  // ── Tentative 1 : données locales ──
+  var user = tryLogin(usersData);
+  if(user){ loginSuccess(user); return; }
+
+  // ── Tentative 2 : Firebase (même si pas encore _fbConnected — on tente quand même) ──
+  if(_fbDb){
+    errEl.textContent = '⏳ Connexion en cours...';
     errEl.style.color = '#f39c12';
     errEl.style.display = 'block';
+
+    // Timeout 5 secondes max
+    var done = false;
+    var timer = setTimeout(function(){
+      if(done) return;
+      done = true;
+      loginFail();
+    }, 5000);
+
     _fbDb.ref('hm_users').once('value').then(function(s){
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
       var fbUsers = s.val();
       if(fbUsers && Array.isArray(fbUsers) && fbUsers.length > 0){
+        // Préserver les hash locaux modifiés
+        var localPwMap = {};
+        usersData.forEach(function(u){ if(u._pwChanged && u.passwordHash) localPwMap[u.id] = u.passwordHash; });
         usersData = fbUsers;
+        usersData.forEach(function(u){ if(localPwMap[u.id]){ u.passwordHash = localPwMap[u.id]; u._pwChanged = true; } });
         localStorage.setItem('hm_users', JSON.stringify(usersData));
+        _fbUsersLoaded = true;
       }
-      _fbUsersLoaded = true;
-      errEl.style.display = 'none';
-      // Réessayer avec les données Firebase
-      var user2 = usersData.find(function(u){ return u.username === un && u.passwordHash === hash && u.active; });
-      if(user2){
-        currentUser = user2;
-        sessionStorage.setItem('hm_session', JSON.stringify({userId: user2.id, loginAt: new Date().toISOString()}));
-        onLoginSuccess();
-      } else {
-        errEl.style.color = '';
-        errEl.textContent = 'Identifiant ou mot de passe incorrect.';
-        errEl.style.display = 'block';
-        document.getElementById('login-password').value = '';
-      }
+      var user2 = tryLogin(usersData);
+      if(user2){ loginSuccess(user2); }
+      else{ loginFail(); }
     }).catch(function(){
-      _fbUsersLoaded = true;
-      errEl.style.color = '';
-      errEl.textContent = 'Identifiant ou mot de passe incorrect.';
-      errEl.style.display = 'block';
-      document.getElementById('login-password').value = '';
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
+      loginFail();
     });
     return;
   }
 
-  // ── Échec définitif ──
-  errEl.style.color = '';
-  errEl.textContent = 'Identifiant ou mot de passe incorrect.';
-  errEl.style.display = 'block';
-  document.getElementById('login-password').value = '';
+  // ── Pas de Firebase — échec ──
+  loginFail();
 }
 
 // ── resetLoginData global ──
